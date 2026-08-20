@@ -55,6 +55,9 @@ describe('the matrix', () => {
       'write:customer',
       'write:inquiry',
       'write:quotation',
+      'parse:inquiry',
+      'review:inquiry-match',
+      'mark:inquiry-ready',
       'approve:quotation',
       'approve:quotation-override',
       'send:quotation',
@@ -72,6 +75,9 @@ describe('the matrix', () => {
       'write:customer',
       'write:inquiry',
       'write:quotation',
+      'parse:inquiry',
+      'review:inquiry-match',
+      'mark:inquiry-ready',
       'approve:quotation',
       'send:quotation',
       'approve:customer-message',
@@ -140,6 +146,26 @@ describe('separation of duties', () => {
   it('does not let finance write quotations', () => {
     expect(can('FINANCE', 'write:quotation')).toBe(false);
     expect(can('FINANCE', 'approve:quotation')).toBe(false);
+  });
+
+  it('keeps inquiry interpretation inside sales', () => {
+    // Finance and warehouse have no business reinterpreting what a customer asked for, and
+    // granting them the ability "so the demo flows" is how a permission model starts rotting.
+    for (const permission of ['parse:inquiry', 'review:inquiry-match', 'mark:inquiry-ready'] as const) {
+      expect(can('FINANCE', permission)).toBe(false);
+      expect(can('WAREHOUSE', permission)).toBe(false);
+      expect(can('SALESPERSON', permission)).toBe(true);
+      expect(can('SALES_MANAGER', permission)).toBe(true);
+      expect(can('OWNER_ADMIN', permission)).toBe(true);
+    }
+  });
+
+  it('separates reviewing a match from typing an inquiry in', () => {
+    // Distinct permissions, so a future data-entry role can hold one without the other. The
+    // matrix happens to grant both to sales today; the separation is what makes that a choice.
+    expect(PERMISSIONS).toContain('write:inquiry');
+    expect(PERMISSIONS).toContain('review:inquiry-match');
+    expect(new Set(PERMISSIONS).size).toBe(PERMISSIONS.length);
   });
 
   it('does not let a write permission carry stock authority', () => {

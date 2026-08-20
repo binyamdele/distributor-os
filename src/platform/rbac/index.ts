@@ -48,6 +48,21 @@ export const PERMISSIONS = [
   'write:quotation',
   'adjust:stock',
 
+  // --- Phase 2: inquiry interpretation --------------------------------------
+  /**
+   * Run the parser over an inquiry. Separate from write:inquiry because it spends money at a
+   * provider and is worth being able to withhold on its own.
+   */
+  'parse:inquiry',
+  /**
+   * Accept, correct or reject the machine's product matches. This is the permission that turns
+   * a proposal into something a quotation may be built from, so it is not implied by the
+   * ability to type an inquiry in.
+   */
+  'review:inquiry-match',
+  /** Declare an inquiry ready for a quotation. The gate at the end of Phase 2. */
+  'mark:inquiry-ready',
+
   // --- Authority, deliberately separate from the write permissions ----------
   /** Approve a quotation within one's own discount limit. Not implied by write:quotation. */
   'approve:quotation',
@@ -106,6 +121,9 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'write:customer',
     'write:inquiry',
     'write:quotation',
+    'parse:inquiry',
+    'review:inquiry-match',
+    'mark:inquiry-ready',
     'approve:quotation',
     'approve:quotation-override',
     'send:quotation',
@@ -119,6 +137,9 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'write:customer',
     'write:inquiry',
     'write:quotation',
+    'parse:inquiry',
+    'review:inquiry-match',
+    'mark:inquiry-ready',
     /**
      * Present, but not sufficient on its own: the approval engine still refuses a discount
      * beyond the salesperson limit, at which point 'approve:quotation-override' is required

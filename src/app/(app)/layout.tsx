@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui';
  */
 const NAV: { href: string; labelKey: MessageKey; permission: Permission }[] = [
   { href: '/', labelKey: 'nav.dashboard', permission: 'read:dashboard' },
+  { href: '/inquiries', labelKey: 'nav.inquiries', permission: 'read:inquiry' },
   { href: '/customers', labelKey: 'nav.customers', permission: 'read:customer' },
   { href: '/products', labelKey: 'nav.products', permission: 'read:product' },
   { href: '/activity', labelKey: 'nav.activity', permission: 'read:audit' },
