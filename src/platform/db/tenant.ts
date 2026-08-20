@@ -37,6 +37,10 @@ export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'StockAdjustment',
   'AuditEvent',
   'NumberSequence',
+  // Phase 2
+  'Inquiry',
+  'InquiryItemProposal',
+  'AiInteraction',
 ]);
 
 /**

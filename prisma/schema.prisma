@@ -7,8 +7,8 @@
 //   2. Every money column is `BigInt` minor units (santim for ETB) alongside an explicit
 //      currency. There is no Decimal and no Float anywhere in the money path.
 //
-// Phases 2-7 add: inquiries, quotations, approvals, follow-ups, orders, payments,
-// warehouse tasks and deliveries. They are deliberately absent here.
+// Phase 2 adds inquiries and their item proposals at the end of this file. Phases 3-7 add:
+// quotations, approvals, follow-ups, orders, payments, warehouse tasks and deliveries.
 
 generator client {
   provider        = "prisma-client-js"
@@ -59,6 +59,9 @@ model Organization {
   stockAdjustments  StockAdjustment[]
   auditEvents       AuditEvent[]
   numberSequences   NumberSequence[]
+  inquiries         Inquiry[]
+  inquiryItems      InquiryItemProposal[]
+  aiInteractions    AiInteraction[]
 
   @@map("organizations")
 }
@@ -172,6 +175,7 @@ model Customer {
   updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inquiries    Inquiry[]
 
   @@index([organizationId])
   @@index([organizationId, companyName])
@@ -208,6 +212,8 @@ model Product {
   organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   aliases          ProductAlias[]
   stockAdjustments StockAdjustment[]
+  matchedInquiryItems  InquiryItemProposal[] @relation("MatchedProduct")
+  proposedInquiryItems InquiryItemProposal[] @relation("ProposedProduct")
 
   @@unique([organizationId, sku])
   @@index([organizationId])
@@ -325,4 +331,188 @@ model NumberSequence {
 
   @@unique([organizationId, kind])
   @@map("number_sequences")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — Inquiries
+//
+// An inquiry is what a customer actually sent, plus the system's interpretation of it. The two
+// are kept apart on purpose: `rawMessage` is evidence and never changes, while the proposals
+// below are a reading of it that a salesperson is expected to correct.
+// ---------------------------------------------------------------------------
+
+enum InquiryChannel {
+  MANUAL
+  WHATSAPP
+  TELEGRAM
+  EMAIL
+  SMS
+  PHONE_NOTE
+}
+
+enum InquiryStatus {
+  RECEIVED
+  PARSING
+  NEEDS_REVIEW
+  READY_FOR_QUOTE
+  PARSE_FAILED
+  CANCELLED
+}
+
+/// What the customer appears to want. Only REQUEST_QUOTATION can reach ready_for_quote.
+enum InquiryIntent {
+  REQUEST_QUOTATION
+  STOCK_ENQUIRY
+  ORDER_FOLLOW_UP
+  PAYMENT_QUERY
+  DELIVERY_QUERY
+  OTHER
+  UNKNOWN
+}
+
+model Inquiry {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @map("organization_id") @db.Uuid
+  customerId     String?        @map("customer_id") @db.Uuid
+  channel        InquiryChannel @default(MANUAL)
+
+  /// Exactly what the customer sent. Untrusted input, and evidence: never rewritten.
+  rawMessage     String         @map("raw_message")
+  /// Whitespace-collapsed form used for display and fingerprinting. Not a translation.
+  normalizedText String         @map("normalized_text")
+  /// BCP-47-ish tag as detected by the parser. Advisory only; nothing is gated on it.
+  detectedLanguage String?      @map("detected_language")
+  intent         InquiryIntent  @default(UNKNOWN)
+  /// Free text the parser found for a delivery destination. Never geocoded in this phase.
+  destinationText String?       @map("destination_text")
+  /// A customer name the parser read out of the text, when no customer was selected.
+  parsedCustomerName String?    @map("parsed_customer_name")
+
+  status           InquiryStatus @default(RECEIVED)
+  assignedUserId   String?       @map("assigned_user_id") @db.Uuid
+  createdById      String?       @map("created_by_id") @db.Uuid
+
+  /// Why the last parse attempt failed, when it did. Cleared on a successful re-parse.
+  parseError     String?   @map("parse_error")
+  parsedAt       DateTime? @map("parsed_at") @db.Timestamptz(6)
+  reviewedAt     DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  readyAt        DateTime? @map("ready_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items        InquiryItemProposal[]
+  aiInteractions AiInteraction[]
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+  @@map("inquiries")
+}
+
+/// How a product was arrived at. Drives both the confidence band and the match-distribution
+/// metric, and is written by deterministic code only.
+enum MatchMethod {
+  /// Normalised request equals the normalised canonical product name.
+  CANONICAL
+  /// Normalised request equals an approved alias.
+  ALIAS
+  /// Explainable string similarity. Never reaches the strong-suggestion band.
+  FUZZY
+  /// Evidence too weak to name a product.
+  UNRESOLVED
+  /// A person chose the product; the machine's opinion is retained in the proposal columns.
+  HUMAN
+}
+
+enum ItemReviewStatus {
+  SUGGESTED
+  CONFIRMED
+  CORRECTED
+  UNRESOLVED
+  REJECTED
+}
+
+/// One requested line, as read from the customer's text.
+///
+/// The machine's proposal and the human's decision are stored side by side rather than one
+/// overwriting the other: "what did the parser suggest, and what did the salesperson do about
+/// it" is the question that tells you whether the parser is worth keeping.
+model InquiryItemProposal {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  inquiryId      String @map("inquiry_id") @db.Uuid
+  /// Order the items appeared in the message, so the review screen matches the message.
+  position       Int
+
+  /// The words the customer used. Never rewritten.
+  rawName           String  @map("raw_name")
+  requestedQuantity Int     @map("requested_quantity")
+  /// Normalised unit token, or null when the customer did not give one.
+  requestedUnit     String? @map("requested_unit")
+
+  /// --- the machine's proposal, frozen at parse time ---
+  proposedProductId String?     @map("proposed_product_id") @db.Uuid
+  proposedConfidence Decimal?   @map("proposed_confidence") @db.Decimal(5, 4)
+  matchMethod       MatchMethod @default(UNRESOLVED) @map("match_method")
+  /// Human-readable explanation of how the score was reached. Shown in the UI verbatim.
+  matchReason       String      @default("") @map("match_reason")
+  /// Runners-up, so the reviewer can pick without searching. [{productId,name,sku,confidence}]
+  candidates        Json?
+  /// Set when two candidates were too close to separate. Forces review regardless of score.
+  ambiguous         Boolean     @default(false)
+
+  /// --- the human's decision ---
+  matchedProductId String?          @map("matched_product_id") @db.Uuid
+  reviewStatus     ItemReviewStatus @default(SUGGESTED) @map("review_status")
+  reviewedById     String?          @map("reviewed_by_id") @db.Uuid
+  reviewedAt       DateTime?        @map("reviewed_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inquiry         Inquiry      @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  matchedProduct  Product?     @relation("MatchedProduct", fields: [matchedProductId], references: [id], onDelete: SetNull)
+  proposedProduct Product?     @relation("ProposedProduct", fields: [proposedProductId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([inquiryId])
+  @@map("inquiry_item_proposals")
+}
+
+/// Metadata about one AI call. Deliberately holds no payload.
+///
+/// The customer's text is already stored once, on the inquiry; copying it here would duplicate
+/// personal data into a table nobody prunes. What is kept is what makes a bad parse
+/// diagnosable: who answered, which prompt asked, and whether the answer validated.
+model AiInteraction {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  inquiryId      String?  @map("inquiry_id") @db.Uuid
+
+  purpose      String
+  provider     String
+  model        String
+  promptVersion String  @map("prompt_version")
+  /// SHA-256 of the input. Lets identical inputs be correlated without storing the text.
+  inputFingerprint String @map("input_fingerprint")
+
+  /// Did the response satisfy its Zod schema?
+  valid        Boolean
+  /// Short machine-readable failure code when it did not. Never a raw provider payload.
+  errorCode    String?  @map("error_code")
+  itemCount    Int?     @map("item_count")
+  latencyMs    Int?     @map("latency_ms")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  inquiry      Inquiry?     @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, createdAt])
+  @@map("ai_interactions")
 }
