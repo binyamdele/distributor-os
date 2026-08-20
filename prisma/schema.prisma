@@ -1,0 +1,328 @@
+// Distributor OS — Phase 1 schema (foundation only).
+//
+// Two rules hold across every model in this file and every model added later:
+//
+//   1. Every business-owned table carries `organizationId`. A table without it is a tenancy
+//      hole, and `tests/tenancy/schema-coverage.test.ts` fails the build if one appears.
+//   2. Every money column is `BigInt` minor units (santim for ETB) alongside an explicit
+//      currency. There is no Decimal and no Float anywhere in the money path.
+//
+// Phases 2-7 add: inquiries, quotations, approvals, follow-ups, orders, payments,
+// warehouse tasks and deliveries. They are deliberately absent here.
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = []
+}
+
+datasource db {
+  provider = "postgresql"
+  // The application connects as a NOSUPERUSER role, so the RLS policies in the migrations
+  // actually apply to it. Superusers bypass RLS unconditionally.
+  url       = env("DATABASE_URL")
+  // Migrations connect as the owner, which is allowed to create and alter tables.
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+enum Role {
+  OWNER_ADMIN
+  SALES_MANAGER
+  SALESPERSON
+  FINANCE
+  WAREHOUSE
+}
+
+model Organization {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String
+  /// ISO-4217. ETB for the first market; present from day one so multi-currency is a
+  /// migration rather than a rewrite.
+  currency      String   @default("ETB") @db.VarChar(3)
+  timezone      String   @default("Africa/Addis_Ababa")
+  defaultLocale String   @default("en") @map("default_locale")
+  /// VAT in basis points (1500 = 15%). Integer, because a rate that multiplies money must
+  /// itself be exact.
+  vatRateBp     Int      @default(1500) @map("vat_rate_bp")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  settings          OrganizationSettings?
+  memberships       Membership[]
+  sessions          Session[]
+  customers         Customer[]
+  products          Product[]
+  productAliases    ProductAlias[]
+  stockAdjustments  StockAdjustment[]
+  auditEvents       AuditEvent[]
+  numberSequences   NumberSequence[]
+
+  @@map("organizations")
+}
+
+model OrganizationSettings {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @unique @map("organization_id") @db.Uuid
+
+  /// Discount authority in basis points. A salesperson may approve their own quotation up to
+  /// this discount; beyond it, a sales manager must approve. Phase 3 consumes these.
+  salespersonDiscountLimitBp  Int @default(300) @map("salesperson_discount_limit_bp")
+  salesManagerDiscountLimitBp Int @default(1000) @map("sales_manager_discount_limit_bp")
+
+  /// A quotation priced below this fraction of the list price always needs manager approval,
+  /// regardless of how the reduction was expressed.
+  minimumPriceFloorBp Int @default(9000) @map("minimum_price_floor_bp")
+
+  defaultPaymentTermsDays Int @default(30) @map("default_payment_terms_days")
+  quoteValidityDays       Int @default(7) @map("quote_validity_days")
+  followUpIntervalDays    Int @default(2) @map("follow_up_interval_days")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("organization_settings")
+}
+
+/// A person. Users are global; their authority is always organization-scoped through a
+/// Membership, so nothing here grants access to anything on its own.
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  fullName     String    @map("full_name")
+  phone        String?
+  locale       String    @default("en")
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships Membership[]
+  sessions    Session[]
+
+  @@map("users")
+}
+
+model Membership {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  role           Role
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@map("memberships")
+}
+
+/// A session is bound to one organization as well as one user. Switching organization issues a
+/// new session rather than mutating this one, so a stolen cookie can never widen its own scope.
+model Session {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  /// Only the hash is stored. The token itself is returned once, to the cookie.
+  tokenHash      String    @unique @map("token_hash")
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([organizationId])
+  @@map("sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Customers
+// ---------------------------------------------------------------------------
+
+enum CreditStatus {
+  CASH_ONLY
+  CREDIT_ALLOWED
+  SUSPENDED
+}
+
+model Customer {
+  id                String       @id @default(uuid()) @db.Uuid
+  organizationId    String       @map("organization_id") @db.Uuid
+  companyName       String       @map("company_name")
+  contactName       String?      @map("contact_name")
+  phone             String?
+  email             String?
+  preferredLanguage String       @default("en") @map("preferred_language")
+  address           String?
+  creditStatus      CreditStatus @default(CASH_ONLY) @map("credit_status")
+  /// Minor units of the organization's currency. Meaningless unless creditStatus allows credit.
+  creditLimitMinor  BigInt       @default(0) @map("credit_limit_minor")
+  paymentTermsDays  Int          @default(0) @map("payment_terms_days")
+  notes             String?
+  createdAt         DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, companyName])
+  @@map("customers")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+model Product {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  sku            String
+  name           String
+  category       String?
+  /// Display unit: bag, piece, quintal, m3. Quantities are integers in this unit.
+  unit           String
+  /// Minor units of the organization's currency.
+  sellingPriceMinor BigInt @map("selling_price_minor")
+  /// Basis points (1500 = 15%). Per product, because not everything is taxed alike.
+  taxRateBp      Int     @default(1500) @map("tax_rate_bp")
+
+  availableStock    Int     @default(0) @map("available_stock")
+  /// Held against confirmed sales orders. Phase 4 writes this; nothing reserves at quotation
+  /// time — see architecture-baseline.md 7.3.
+  reservedStock     Int     @default(0) @map("reserved_stock")
+  reorderThreshold  Int     @default(0) @map("reorder_threshold")
+  active            Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aliases          ProductAlias[]
+  stockAdjustments StockAdjustment[]
+
+  @@unique([organizationId, sku])
+  @@index([organizationId])
+  @@index([organizationId, active])
+  @@map("products")
+}
+
+enum AliasSource {
+  SEED
+  MANUAL
+  LEARNED
+}
+
+/// Customers do not write product names consistently: "12mm", "12 mm steel", "12 fer" and
+/// "rebar 12" all mean Rebar 12mm. A table rather than an array column, because this is
+/// searched by trigram similarity in Phase 2 and audited when a salesperson adds one.
+model ProductAlias {
+  id             String      @id @default(uuid()) @db.Uuid
+  organizationId String      @map("organization_id") @db.Uuid
+  productId      String      @map("product_id") @db.Uuid
+  /// As written by a human.
+  alias          String
+  /// Lowercased, punctuation-stripped, whitespace-collapsed. What matching compares against.
+  normalizedAlias String     @map("normalized_alias")
+  source         AliasSource @default(MANUAL)
+  createdById    String?     @map("created_by_id") @db.Uuid
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, normalizedAlias])
+  @@index([organizationId])
+  @@index([productId])
+  @@map("product_aliases")
+}
+
+/// Every movement of stock, with a reason. Kept complete from Phase 1 because reorder
+/// recommendations and demand forecasting later depend on an unbroken history — and because
+/// "who changed the cement count" is a question distributors actually ask.
+model StockAdjustment {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  productId      String   @map("product_id") @db.Uuid
+  /// Signed: positive is a receipt, negative is a removal.
+  delta          Int
+  stockAfter     Int      @map("stock_after")
+  reason         String
+  actorId        String?  @map("actor_id") @db.Uuid
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([productId])
+  @@map("stock_adjustments")
+}
+
+// ---------------------------------------------------------------------------
+// Cross-cutting
+// ---------------------------------------------------------------------------
+
+enum ActorType {
+  USER
+  SYSTEM
+  AI
+}
+
+/// Append-only. Written inside the same transaction as the mutation it records, so a mutation
+/// cannot commit without its audit row. `sequence` is allocated per organization under an
+/// advisory lock, giving a gapless per-tenant ordering that a timestamp cannot promise.
+model AuditEvent {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @map("organization_id") @db.Uuid
+  sequence       BigInt
+  actorType      ActorType @map("actor_type")
+  actorId        String?   @map("actor_id") @db.Uuid
+  /// Dotted verb, e.g. "customer.created", "product.stock_adjusted".
+  action         String
+  entityType     String    @map("entity_type")
+  entityId       String    @map("entity_id")
+  oldState       Json?     @map("old_state")
+  newState       Json?     @map("new_state")
+  /// Where the change came from: "web", "seed", "api".
+  source         String
+  approvalStatus String?   @map("approval_status")
+  aiInvolved     Boolean   @default(false) @map("ai_involved")
+  /// Present only when the actor was AI and the action carried a computed confidence.
+  confidence     Decimal?  @db.Decimal(5, 4)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, sequence])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, entityType, entityId])
+  @@map("audit_events")
+}
+
+enum SequenceKind {
+  QUOTATION
+  ORDER
+}
+
+/// Q-000001 and SO-000001. Allocated under a row lock so two salespeople clicking at the same
+/// moment cannot receive the same number.
+model NumberSequence {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  kind           SequenceKind
+  nextValue      BigInt       @default(1) @map("next_value")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, kind])
+  @@map("number_sequences")
+}

@@ -1,0 +1,73 @@
+@import 'tailwindcss';
+
+/*
+ * An operational palette, not a futuristic one.
+ *
+ * The brief is explicit: this should read as a tool a distributor's staff use all day, not as
+ * an AI product demo. So: neutral surfaces, one restrained accent, and colour reserved for
+ * status — where it carries meaning rather than mood. No gradients, no glow, no robot imagery.
+ */
+@theme {
+  --color-surface: oklch(99% 0.002 250);
+  --color-surface-raised: oklch(100% 0 0);
+  --color-surface-sunken: oklch(96.5% 0.004 250);
+  --color-border-subtle: oklch(91% 0.006 250);
+  --color-border-strong: oklch(84% 0.008 250);
+
+  --color-ink: oklch(24% 0.012 260);
+  --color-ink-muted: oklch(52% 0.012 260);
+  --color-ink-faint: oklch(64% 0.01 260);
+
+  --color-accent: oklch(48% 0.13 250);
+  --color-accent-hover: oklch(42% 0.13 250);
+  --color-accent-soft: oklch(95% 0.03 250);
+
+  --color-positive: oklch(52% 0.13 150);
+  --color-positive-soft: oklch(95% 0.04 150);
+  --color-caution: oklch(62% 0.13 75);
+  --color-caution-soft: oklch(96% 0.05 75);
+  --color-critical: oklch(52% 0.18 25);
+  --color-critical-soft: oklch(96% 0.03 25);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', 'Noto Sans Ethiopic', sans-serif;
+  /* Money and quantities are tabular everywhere, so columns of figures line up. */
+  --font-mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  @theme {
+    --color-surface: oklch(21% 0.008 260);
+    --color-surface-raised: oklch(25% 0.009 260);
+    --color-surface-sunken: oklch(18% 0.008 260);
+    --color-border-subtle: oklch(32% 0.01 260);
+    --color-border-strong: oklch(40% 0.012 260);
+
+    --color-ink: oklch(95% 0.004 260);
+    --color-ink-muted: oklch(72% 0.008 260);
+    --color-ink-faint: oklch(60% 0.008 260);
+
+    --color-accent: oklch(70% 0.12 250);
+    --color-accent-hover: oklch(76% 0.12 250);
+    --color-accent-soft: oklch(30% 0.05 250);
+
+    --color-positive: oklch(72% 0.14 150);
+    --color-positive-soft: oklch(28% 0.05 150);
+    --color-caution: oklch(78% 0.13 75);
+    --color-caution-soft: oklch(30% 0.05 75);
+    --color-critical: oklch(70% 0.16 25);
+    --color-critical-soft: oklch(28% 0.06 25);
+  }
+}
+
+html,
+body {
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+/* Figures line up in columns without needing a monospace font for everything. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}

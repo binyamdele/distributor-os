@@ -1,0 +1,153 @@
+import { describe, expect, it } from 'vitest';
+import {
+  PERMISSIONS,
+  type Permission,
+  ROLES,
+  ROLE_LABEL_KEYS,
+  ROLE_PERMISSIONS,
+  type Role,
+  can,
+} from '@/platform/rbac';
+import { PRISMA_ROLES } from '../support/prisma-meta';
+
+/**
+ * The permission matrix, asserted in both directions.
+ *
+ * A test that only checks the grants would pass a matrix that granted everything to everyone.
+ * Every (role, permission) pair is therefore checked against an explicit expectation, and the
+ * denials are the half that matters.
+ */
+describe('roles', () => {
+  it('match the Role enum in the database schema', () => {
+    // Drift here would let a role exist in one place and not the other, which surfaces as a
+    // login that succeeds and then authorises nothing.
+    expect([...ROLES].sort()).toEqual([...PRISMA_ROLES].sort());
+  });
+
+  it('each have a label key for the UI', () => {
+    for (const role of ROLES) expect(ROLE_LABEL_KEYS[role]).toBeTruthy();
+  });
+
+  it('grant no permission that is not in the master list', () => {
+    const known = new Set<string>(PERMISSIONS);
+    for (const role of ROLES) {
+      for (const permission of ROLE_PERMISSIONS[role]) {
+        expect(known.has(permission), `${role} has unknown permission ${permission}`).toBe(true);
+      }
+    }
+  });
+});
+
+describe('the matrix', () => {
+  /** Expected grants, written out rather than derived, so the test can disagree with the code. */
+  const EXPECTED: Record<Role, readonly Permission[]> = {
+    OWNER_ADMIN: PERMISSIONS,
+    SALES_MANAGER: [
+      'read:dashboard',
+      'read:customer',
+      'read:product',
+      'read:inquiry',
+      'read:quotation',
+      'read:order',
+      'read:receivables',
+      'read:audit',
+      'read:settings',
+      'write:customer',
+      'write:inquiry',
+      'write:quotation',
+      'approve:quotation',
+      'approve:quotation-override',
+      'send:quotation',
+      'approve:customer-message',
+      'set:customer-credit',
+      'cancel:order',
+    ],
+    SALESPERSON: [
+      'read:dashboard',
+      'read:customer',
+      'read:product',
+      'read:inquiry',
+      'read:quotation',
+      'read:order',
+      'write:customer',
+      'write:inquiry',
+      'write:quotation',
+      'approve:quotation',
+      'send:quotation',
+      'approve:customer-message',
+    ],
+    FINANCE: [
+      'read:dashboard',
+      'read:customer',
+      'read:order',
+      'read:payment',
+      'read:receivables',
+      'read:audit',
+      'confirm:payment',
+      'reject:payment',
+      'set:customer-credit',
+      'approve:customer-message',
+    ],
+    WAREHOUSE: [
+      'read:dashboard',
+      'read:order',
+      'read:product',
+      'read:warehouse',
+      'read:delivery',
+      'adjust:stock',
+      'prepare:warehouse-task',
+      'dispatch:delivery',
+      'complete:delivery',
+    ],
+  };
+
+  for (const role of ROLES) {
+    describe(role, () => {
+      const granted = new Set<Permission>(EXPECTED[role]);
+
+      for (const permission of PERMISSIONS) {
+        const shouldHave = granted.has(permission);
+        it(`${shouldHave ? 'can' : 'cannot'} ${permission}`, () => {
+          expect(can(role, permission)).toBe(shouldHave);
+        });
+      }
+    });
+  }
+});
+
+describe('separation of duties', () => {
+  it('keeps payment confirmation away from sales', () => {
+    // The whole payment-review design rests on this: nobody who can create the order can also
+    // declare that the money for it arrived.
+    expect(can('SALESPERSON', 'confirm:payment')).toBe(false);
+    expect(can('SALES_MANAGER', 'confirm:payment')).toBe(false);
+    expect(can('WAREHOUSE', 'confirm:payment')).toBe(false);
+    expect(can('FINANCE', 'confirm:payment')).toBe(true);
+  });
+
+  it('does not let a salesperson approve beyond their own limit', () => {
+    expect(can('SALESPERSON', 'approve:quotation')).toBe(true);
+    expect(can('SALESPERSON', 'approve:quotation-override')).toBe(false);
+    expect(can('SALES_MANAGER', 'approve:quotation-override')).toBe(true);
+  });
+
+  it('does not let warehouse staff touch prices or customers', () => {
+    expect(can('WAREHOUSE', 'write:product')).toBe(false);
+    expect(can('WAREHOUSE', 'write:customer')).toBe(false);
+    expect(can('WAREHOUSE', 'read:customer')).toBe(false);
+  });
+
+  it('does not let finance write quotations', () => {
+    expect(can('FINANCE', 'write:quotation')).toBe(false);
+    expect(can('FINANCE', 'approve:quotation')).toBe(false);
+  });
+
+  it('does not let a write permission carry stock authority', () => {
+    // adjust:stock is separate from write:product on purpose: the people who count the stock
+    // are not the people who set the price.
+    expect(can('SALES_MANAGER', 'adjust:stock')).toBe(false);
+    expect(can('SALESPERSON', 'adjust:stock')).toBe(false);
+    expect(can('WAREHOUSE', 'adjust:stock')).toBe(true);
+    expect(can('WAREHOUSE', 'write:product')).toBe(false);
+  });
+});

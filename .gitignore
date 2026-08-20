@@ -1,0 +1,28 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+coverage/
+
+# Secrets — never commit. .env.example is the only env file in version control.
+.env
+.env.local
+.env.*.local
+
+# Local file storage for uploaded payment proofs (contains customer data)
+storage/
+!storage/.gitkeep
+
+# Test artefacts
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
