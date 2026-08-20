@@ -6,8 +6,11 @@ import { type Result, fail, ok } from '@/platform/result';
 import { parseDecimal, toDecimalString } from '@/platform/money';
 import { recordAudit } from '@/modules/audit';
 import { normalizeAlias, parseAliasList } from './normalize';
+import { type MatchOutcome, type MatchableProduct, matchProduct } from './matching';
 
 export { normalizeAlias, parseAliasList };
+export * from './matching';
+export * from './units';
 
 export const productInputSchema = z.object({
   sku: z.string().trim().min(1, 'error.required').max(60),
@@ -271,4 +274,49 @@ export async function stockHistory(
     orderBy: { createdAt: 'desc' },
     take: limit,
   }) as unknown as Promise<StockAdjustmentRecord[]>;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — the corpus the deterministic matcher scores against
+// ---------------------------------------------------------------------------
+
+/**
+ * Loads this organization's matchable catalogue.
+ *
+ * This is the single point at which tenancy and matching meet, and the reason the matcher
+ * itself takes a corpus rather than a database handle: another organization's products are
+ * never in the set being scored, so there is no filter that could be forgotten later. The
+ * query goes through the tenant-scoped client, and RLS stands behind it.
+ *
+ * Inactive products are excluded — quoting something the distributor has withdrawn is worse
+ * than failing to match it.
+ */
+export async function loadMatchCorpus(tx: TenantTransaction): Promise<MatchableProduct[]> {
+  const products = await tx.product.findMany({
+    where: { active: true },
+    select: {
+      id: true,
+      sku: true,
+      name: true,
+      unit: true,
+      aliases: { select: { normalizedAlias: true } },
+    },
+    orderBy: { sku: 'asc' },
+  });
+
+  return products.map((product) => ({
+    id: product.id,
+    sku: product.sku,
+    name: product.name,
+    unit: product.unit,
+    aliases: product.aliases.map((alias) => alias.normalizedAlias),
+  }));
+}
+
+/** Convenience for one-off lookups; prefer loading the corpus once per inquiry. */
+export async function findProductCandidates(
+  tx: TenantTransaction,
+  rawName: string,
+): Promise<MatchOutcome> {
+  return matchProduct(rawName, await loadMatchCorpus(tx));
 }
