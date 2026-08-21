@@ -62,6 +62,9 @@ model Organization {
   inquiries         Inquiry[]
   inquiryItems      InquiryItemProposal[]
   aiInteractions    AiInteraction[]
+  quotations        Quotation[]
+  quotationItems    QuotationItem[]
+  quotationApprovals QuotationApproval[]
 
   @@map("organizations")
 }
@@ -82,6 +85,14 @@ model OrganizationSettings {
   defaultPaymentTermsDays Int @default(30) @map("default_payment_terms_days")
   quoteValidityDays       Int @default(7) @map("quote_validity_days")
   followUpIntervalDays    Int @default(2) @map("follow_up_interval_days")
+
+  /// Whether a delivery charge attracts VAT at the organization's rate.
+  ///
+  /// A setting rather than a constant because the brief is explicit that the tax treatment of
+  /// delivery must be stated rather than assumed. The default is true: transport supplied along
+  /// with goods is normally taxable, and an organization that believes otherwise should have to
+  /// say so on a settings screen rather than discover it in a total.
+  deliveryFeeTaxable Boolean @default(true) @map("delivery_fee_taxable")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -176,6 +187,7 @@ model Customer {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   inquiries    Inquiry[]
+  quotations   Quotation[]
 
   @@index([organizationId])
   @@index([organizationId, companyName])
@@ -214,6 +226,7 @@ model Product {
   stockAdjustments StockAdjustment[]
   matchedInquiryItems  InquiryItemProposal[] @relation("MatchedProduct")
   proposedInquiryItems InquiryItemProposal[] @relation("ProposedProduct")
+  quotationItems       QuotationItem[]
 
   @@unique([organizationId, sku])
   @@index([organizationId])
@@ -405,6 +418,7 @@ model Inquiry {
   customer     Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
   items        InquiryItemProposal[]
   aiInteractions AiInteraction[]
+  quotations   Quotation[]
 
   @@index([organizationId])
   @@index([organizationId, status])
@@ -515,4 +529,193 @@ model AiInteraction {
   @@index([organizationId])
   @@index([organizationId, createdAt])
   @@map("ai_interactions")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3 — Quotations
+//
+// A quotation is a commercial promise. Two rules follow from that and shape everything below:
+//
+//   1. It is *snapshotted*. Every price, name, unit and tax rate is copied onto the line at
+//      draft time. A quotation the customer has seen must not change because someone edited
+//      the catalogue afterwards.
+//   2. Approval is *bound to figures*. An approval carries the hash of the exact commercial
+//      payload it was given, so editing anything approval-sensitive afterwards withdraws it.
+// ---------------------------------------------------------------------------
+
+enum QuotationStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  SENT
+  /// The customer said yes. Reserved for Phase 4, which converts it to a sales order; no
+  /// Phase 3 action reaches this state.
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  SUPERSEDED
+  CANCELLED
+}
+
+enum PaymentType {
+  CASH
+  CREDIT
+}
+
+/// Who is allowed to approve a given quotation, decided deterministically from the figures.
+enum ApprovalLevel {
+  SALESPERSON
+  SALES_MANAGER
+  /// Nobody. The discount exceeds the manager limit or breaches the price floor, and the
+  /// remedy is to change the quotation rather than to find a bigger signature.
+  BLOCKED
+}
+
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+model Quotation {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  /// Q-000001. Allocated server-side from number_sequences under a row lock.
+  quotationNumber String  @map("quotation_number")
+  /// The reviewed inquiry this was drafted from, when there was one.
+  inquiryId       String? @map("inquiry_id") @db.Uuid
+  customerId      String  @map("customer_id") @db.Uuid
+
+  status   QuotationStatus @default(DRAFT)
+  currency String          @db.VarChar(3)
+
+  paymentType      PaymentType @default(CASH) @map("payment_type")
+  /// 0 for cash. For credit, bounded by the customer's own agreed terms.
+  paymentTermsDays Int         @default(0) @map("payment_terms_days")
+
+  /// --- deterministic totals, all integer minor units ---
+  subtotalMinor      BigInt @default(0) @map("subtotal_minor")
+  discountTotalMinor BigInt @default(0) @map("discount_total_minor")
+  deliveryFeeMinor   BigInt @default(0) @map("delivery_fee_minor")
+  /// Tax on the delivery fee, kept separate so the document can show it and so a change in the
+  /// taxable-delivery policy stays visible rather than buried inside taxTotal.
+  deliveryTaxMinor   BigInt @default(0) @map("delivery_tax_minor")
+  taxTotalMinor      BigInt @default(0) @map("tax_total_minor")
+  grandTotalMinor    BigInt @default(0) @map("grand_total_minor")
+
+  validityDate  DateTime @map("validity_date") @db.Date
+  customerNotes String?  @map("customer_notes")
+  internalNotes String?  @map("internal_notes")
+
+  /// --- approval binding ---
+  /// Recomputed from the persisted rows after every mutation.
+  currentPayloadHash  String        @map("current_payload_hash")
+  /// The payload that was actually approved. Approval is live only while the two agree.
+  approvedPayloadHash String?       @map("approved_payload_hash")
+  /// The level the rules engine required at the moment of the last recalculation.
+  requiredLevel       ApprovalLevel @default(SALESPERSON) @map("required_level")
+
+  createdById  String?   @map("created_by_id") @db.Uuid
+  approvedById String?   @map("approved_by_id") @db.Uuid
+  approvedAt   DateTime? @map("approved_at") @db.Timestamptz(6)
+  submittedAt  DateTime? @map("submitted_at") @db.Timestamptz(6)
+  sentById     String?   @map("sent_by_id") @db.Uuid
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz(6)
+  acceptedAt   DateTime? @map("accepted_at") @db.Timestamptz(6)
+  rejectedAt   DateTime? @map("rejected_at") @db.Timestamptz(6)
+  expiredAt    DateTime? @map("expired_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer     Customer            @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  inquiry      Inquiry?            @relation(fields: [inquiryId], references: [id], onDelete: SetNull)
+  items        QuotationItem[]
+  approvals    QuotationApproval[]
+
+  @@unique([organizationId, quotationNumber])
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+  @@map("quotations")
+}
+
+/// One priced line, frozen at the moment it was drafted.
+///
+/// `productId` is kept for traceability — "which catalogue entry did this come from" is a real
+/// question — but nothing on this row is ever read back through it. Every commercial fact the
+/// customer was shown lives in a snapshot column, so the line survives a rename, a reprice or
+/// the deletion of the product intact.
+model QuotationItem {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  quotationId    String  @map("quotation_id") @db.Uuid
+  productId      String? @map("product_id") @db.Uuid
+
+  skuSnapshot         String @map("sku_snapshot")
+  descriptionSnapshot String @map("description_snapshot")
+  unitSnapshot        String @map("unit_snapshot")
+
+  /// Whole units only. See docs/phase-3-quotations.md on why fractional quantities are refused.
+  quantity Int
+
+  /// The catalogue price at snapshot time, kept so a discount can be shown against something.
+  listUnitPriceMinor   BigInt @map("list_unit_price_minor")
+  /// The per-unit price the line is actually built from. Equal to the list price in Phase 3;
+  /// the column exists so a future authorised override needs no migration.
+  quotedUnitPriceMinor BigInt @map("quoted_unit_price_minor")
+  discountBp           Int    @default(0) @map("discount_bp")
+  taxRateBp            Int    @map("tax_rate_bp")
+
+  /// --- derived, stored so the displayed figures and the stored figures cannot disagree ---
+  lineSubtotalMinor  BigInt @map("line_subtotal_minor")
+  lineDiscountMinor  BigInt @map("line_discount_minor")
+  taxableAmountMinor BigInt @map("taxable_amount_minor")
+  taxMinor           BigInt @map("tax_minor")
+  lineTotalMinor     BigInt @map("line_total_minor")
+
+  sortOrder Int @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotation    Quotation    @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product      Product?     @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([quotationId])
+  @@map("quotation_items")
+}
+
+/// A durable record of who approved which exact version.
+///
+/// Its own table rather than something inferred from the audit log, because "who approved this
+/// payload" must be answerable by a query with a deterministic answer — and must keep its
+/// answer after a later edit invalidates the approval.
+model QuotationApproval {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  quotationId    String @map("quotation_id") @db.Uuid
+
+  approverId   String        @map("approver_id") @db.Uuid
+  /// The approver's role at the moment of the decision, not looked up later.
+  approverRole Role          @map("approver_role")
+  /// The level the rules engine required when the decision was made.
+  requiredLevel ApprovalLevel @map("required_level")
+  /// The exact payload this decision was given for.
+  payloadHash  String        @map("payload_hash")
+
+  decision ApprovalDecision
+  reason   String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotation    Quotation    @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([quotationId])
+  @@map("quotation_approvals")
 }
