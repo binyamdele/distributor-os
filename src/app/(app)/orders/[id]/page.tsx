@@ -4,6 +4,7 @@ import { requirePermission } from '@/app/lib/session';
 import { withTenant } from '@/platform/db';
 import { getOrder } from '@/modules/orders';
 import { orderBalance, paymentsForOrder } from '@/modules/payments';
+import { fulfillmentForOrder } from '@/modules/fulfillment';
 import { auditTrailFor } from '@/modules/audit';
 import { can } from '@/platform/rbac';
 import { formatMoney } from '@/platform/money';
@@ -20,6 +21,8 @@ import {
 import { CancelOrderForm } from '../order-forms';
 import { SubmitPaymentForm } from '../../payments/submit-form';
 import { PAYMENT_STATE_TONE, methodKey, paymentStateKey } from '../../payments/page';
+import { TASK_TONE, taskStatusKey } from '../../warehouse/page';
+import { DELIVERY_TONE, deliveryStatusKey } from '../../deliveries/page';
 
 /**
  * The sales order screen.
@@ -39,13 +42,14 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
     return {
       order: order.value,
       payments: await paymentsForOrder(tx, id),
+      fulfillment: await fulfillmentForOrder(tx, id),
       balance: balance.ok ? balance.value : null,
       history: can(session.role, 'read:audit') ? await auditTrailFor(tx, 'sales_order', id) : [],
     };
   });
 
   if (!data) notFound();
-  const { order, payments, balance, history } = data;
+  const { order, payments, balance, fulfillment, history } = data;
   const fmt = (amountMinor: bigint) => formatMoney({ amountMinor, currency: order.currency });
 
   const activeReservations = order.reservations.filter(
@@ -224,6 +228,63 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           </tbody>
         </TableWrap>
       </section>
+
+      {/* --- fulfilment: where the goods are ---------------------------------- */}
+      {fulfillment.task || fulfillment.delivery || order.pickedUpAt ? (
+        <section className="mb-6">
+          <h2 className="mb-3 text-sm font-semibold text-ink">{t('order.fulfilment')}</h2>
+          <Card className="space-y-2 text-sm">
+            {fulfillment.task ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Link
+                  href={`/warehouse/${fulfillment.task.id}`}
+                  className="font-mono text-accent hover:underline"
+                  data-testid="order-warehouse-link"
+                >
+                  {fulfillment.task.taskNumber}
+                </Link>
+                <Badge tone={TASK_TONE[fulfillment.task.status]}>
+                  {t(taskStatusKey(fulfillment.task.status))}
+                </Badge>
+              </div>
+            ) : null}
+
+            {fulfillment.delivery ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Link
+                  href={`/deliveries/${fulfillment.delivery.id}`}
+                  className="font-mono text-accent hover:underline"
+                  data-testid="order-delivery-link"
+                >
+                  {fulfillment.delivery.deliveryNumber}
+                </Link>
+                <Badge tone={DELIVERY_TONE[fulfillment.delivery.status]}>
+                  {t(deliveryStatusKey(fulfillment.delivery.status))}
+                </Badge>
+              </div>
+            ) : null}
+
+            {order.pickedUpAt ? (
+              <p className="text-ink-muted" data-testid="order-picked-up">
+                {t('wh.pickedUp')}
+              </p>
+            ) : null}
+          </Card>
+
+          {/*
+           * The sentence this whole phase exists to be able to say honestly. A delivered
+           * credit order is finished operationally and still owes every santim.
+           */}
+          {order.status === 'COMPLETED' && balance && balance.outstandingMinor > 0n ? (
+            <Card className="mt-3 border-caution/30 bg-caution-soft" data-testid="completed-owing">
+              <p className="text-sm text-ink">{t('order.completedButOwing')}</p>
+              <p className="tabular mt-1 text-sm text-ink-muted">
+                {t('pay.outstanding')}: {fmt(balance.outstandingMinor)}
+              </p>
+            </Card>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* --- money: what has been claimed, what has been confirmed ---------- */}
       <section className="mb-6">
