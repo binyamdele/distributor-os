@@ -4,12 +4,15 @@ import { requirePermission } from '@/app/lib/session';
 import { withTenant } from '@/platform/db';
 import { canRoleApprove, getQuotation } from '@/modules/quotations';
 import { listProducts } from '@/modules/catalog';
+import { followUpsFor } from '@/modules/followups';
 import { auditTrailFor } from '@/modules/audit';
 import { can } from '@/platform/rbac';
 import { formatMoney, toDecimalString } from '@/platform/money';
 import { formatDate, formatDateTime, t } from '@/platform/i18n';
+import type { MessageKey } from '@/platform/i18n';
 import { Badge, Card, PageHeader, TableWrap, Td, Th } from '@/components/ui';
 import { QUOTE_STATUS_TONE, quoteStatusKey } from '../page';
+import { CreateOrderForm, RecordAcceptanceForm, RecordRejectionForm } from '../../orders/order-forms';
 import {
   AddLineForm,
   ApprovalForm,
@@ -40,12 +43,17 @@ export default async function QuotationDetailPage({
     return {
       quotation: quotation.value,
       products: await listProducts(tx),
+      followUps: await followUpsFor(tx, id),
+      existingOrder: await tx.salesOrder.findFirst({
+        where: { quotationId: id, status: { not: 'CANCELLED' } },
+        select: { id: true, orderNumber: true },
+      }),
       history: can(session.role, 'read:audit') ? await auditTrailFor(tx, 'quotation', id) : [],
     };
   });
 
   if (!data) notFound();
-  const { quotation, products, history } = data;
+  const { quotation, products, history, followUps, existingOrder } = data;
   const currency = quotation.currency;
   const fmt = (amountMinor: bigint) => formatMoney({ amountMinor, currency });
 
@@ -340,7 +348,100 @@ export default async function QuotationDetailPage({
             <p className="mt-1 text-xs text-ink-muted">{t('quote.sentNote')}</p>
           </Card>
         ) : null}
+
+        {/* --- Phase 4: what the customer said, and what follows from it ----- */}
+        {quotation.status === 'SENT' && can(session.role, 'record:quotation-acceptance') ? (
+          <Card>
+            <h3 className="text-sm font-semibold text-ink">{t('accept.title')}</h3>
+            <div className="mt-3">
+              <RecordAcceptanceForm quotationId={quotation.id} />
+            </div>
+          </Card>
+        ) : null}
+
+        {quotation.status === 'SENT' && can(session.role, 'record:quotation-rejection') ? (
+          <Card>
+            <h3 className="text-sm font-semibold text-ink">{t('reject.title')}</h3>
+            <div className="mt-3">
+              <RecordRejectionForm quotationId={quotation.id} />
+            </div>
+          </Card>
+        ) : null}
+
+        {quotation.status === 'ACCEPTED' ? (
+          <Card className="border-positive/30 bg-positive-soft">
+            <h3 className="text-sm font-semibold text-positive">{t('accept.recorded')}</h3>
+            {existingOrder ? (
+              <p className="mt-2 text-sm text-ink">
+                Converted to{' '}
+                <Link
+                  href={`/orders/${existingOrder.id}`}
+                  className="font-mono text-accent hover:underline"
+                >
+                  {existingOrder.orderNumber}
+                </Link>
+                .
+              </p>
+            ) : can(session.role, 'create:sales-order') ? (
+              <div className="mt-3">
+                {/* Stock is checked here, not at acceptance. The yard may have changed since the
+                    quotation went out, and that is a real thing the salesperson must be told. */}
+                <CreateOrderForm quotationId={quotation.id} />
+              </div>
+            ) : null}
+          </Card>
+        ) : null}
+
+        {quotation.status === 'REJECTED' ? (
+          <Card>
+            <h3 className="text-sm font-semibold text-ink">{t('reject.recorded')}</h3>
+          </Card>
+        ) : null}
       </section>
+
+      {followUps.length > 0 ? (
+        <section className="mb-6">
+          <h2 className="mb-3 text-sm font-semibold text-ink">{t('followUp.history')}</h2>
+          <TableWrap>
+            <thead>
+              <tr>
+                <Th className="w-20 text-right">{t('followUp.attempt')}</Th>
+                <Th>{t('followUp.dueAt')}</Th>
+                <Th>Status</Th>
+                <Th>{t('followUp.outcome')}</Th>
+                <Th>{t('followUp.note')}</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {followUps.map((followUp) => (
+                <tr key={followUp.id}>
+                  <Td className="tabular text-right">{followUp.sequence}</Td>
+                  <Td className="text-ink-muted whitespace-nowrap">
+                    {formatDate(followUp.dueAt, session.locale, session.timezone)}
+                  </Td>
+                  <Td>
+                    <Badge
+                      tone={
+                        followUp.status === 'COMPLETED'
+                          ? 'positive'
+                          : followUp.status === 'CANCELLED'
+                            ? 'neutral'
+                            : 'caution'
+                      }
+                    >
+                      {followUp.status}
+                    </Badge>
+                  </Td>
+                  <Td className="text-ink-muted">
+                    {followUp.outcome ? t(`outcome.${followUp.outcome}` as MessageKey) : '—'}
+                  </Td>
+                  <Td className="text-ink-muted">{followUp.note ?? '—'}</Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        </section>
+      ) : null}
 
       {/* --- approval history ---------------------------------------------- */}
       {quotation.approvals.length > 0 ? (
