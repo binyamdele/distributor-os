@@ -125,9 +125,41 @@ export const PERMISSIONS = [
   'reject:payment',
 
   // --- Fulfilment -----------------------------------------------------------
+  // --- Phase 6: warehouse and delivery --------------------------------------
+  'read:warehouse-task',
+  /**
+   * Raise the warehouse task for an order that is already eligible.
+   *
+   * Separate from starting one. Deciding that an order should go to the floor is a
+   * scheduling act; picking it is the work. A small yard grants both to the same people,
+   * and the separation is what lets a larger one stop doing that.
+   */
+  'create:warehouse-task',
+  'start:warehouse-task',
+  /** Mark the picked lines as picked. Moves no inventory. */
   'prepare:warehouse-task',
+  /**
+   * Hand the goods out of warehouse custody.
+   *
+   * This is the permission that consumes stock: physical quantity leaves, the reservation
+   * becomes CONSUMED, and none of it can be undone from here. It is deliberately not implied
+   * by being able to pick a task.
+   */
+  'complete:warehouse-task',
+  'cancel:warehouse-task',
+
+  'assign:delivery',
   'dispatch:delivery',
   'complete:delivery',
+  /**
+   * Record that a delivery did not arrive.
+   *
+   * Its own permission because a failure is an operational fact with consequences — the goods
+   * are somewhere between the yard and the customer, and nothing in this phase puts them back.
+   */
+  'fail:delivery',
+  /** Record that the customer collected the goods themselves. */
+  'record:pickup',
 
   // --- Administration -------------------------------------------------------
   'manage:users',
@@ -178,6 +210,12 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'approve:customer-message',
     'set:customer-credit',
     'cancel:order',
+    'read:warehouse-task',
+    'read:delivery',
+    'assign:delivery',
+    'dispatch:delivery',
+    'complete:delivery',
+    'fail:delivery',
   ],
 
   SALESPERSON: [
@@ -204,6 +242,9 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'create:sales-order',
     'submit:payment-evidence',
     'approve:customer-message',
+    /* Read-only. A salesperson answers "where is my order" and moves nothing themselves. */
+    'read:warehouse-task',
+    'read:delivery',
   ],
 
   FINANCE: [
@@ -223,6 +264,9 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'reject:payment',
     'set:customer-credit',
     'approve:customer-message',
+    /* Read-only, and for one reason: whether goods went out changes what to say to a debtor. */
+    'read:warehouse-task',
+    'read:delivery',
   ],
 
   WAREHOUSE: [
@@ -237,9 +281,25 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
      * the floor, and cannot change what a bag costs.
      */
     'adjust:stock',
+    'read:warehouse-task',
+    'create:warehouse-task',
+    'start:warehouse-task',
     'prepare:warehouse-task',
-    'dispatch:delivery',
-    'complete:delivery',
+    'complete:warehouse-task',
+    /**
+     * The collection path. The person who hands goods over the counter is the person who
+     * records that it happened, and for a pickup that is the warehouse.
+     */
+    'record:pickup',
+    /*
+     * Deliberately absent: assign, dispatch, complete and fail a delivery.
+     *
+     * Once goods leave the yard they stop being the warehouse's problem, and a role that could
+     * both hand goods out and declare them delivered could close an order end to end with
+     * nobody else involved. There is no dedicated logistics role in this product, so those
+     * four sit with the sales manager and the owner — the narrowest existing fit — rather than
+     * being used to justify inventing one.
+     */
   ],
 };
 

@@ -22,3 +22,12 @@ export const MODELS: readonly ModelMeta[] = Prisma.dmmf.datamodel.models.map((mo
 /** The `Role` enum as the database defines it. */
 export const PRISMA_ROLES: readonly string[] =
   Prisma.dmmf.datamodel.enums.find((e) => e.name === 'Role')?.values.map((v) => v.name) ?? [];
+
+/** Any enum, by name, as the database defines it. */
+export function prismaEnum(name: string): readonly string[] {
+  return Prisma.dmmf.datamodel.enums.find((e) => e.name === name)?.values.map((v) => v.name) ?? [];
+}
+
+export const PRISMA_WAREHOUSE_TASK_STATUSES = prismaEnum('WarehouseTaskStatus');
+export const PRISMA_DELIVERY_STATUSES = prismaEnum('DeliveryStatus');
+export const PRISMA_DELIVERY_FAILURE_REASONS = prismaEnum('DeliveryFailureReason');

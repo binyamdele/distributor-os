@@ -16,7 +16,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   // The application connects as a NOSUPERUSER role, so the RLS policies in the migrations
   // actually apply to it. Superusers bypass RLS unconditionally.
   url       = env("DATABASE_URL")
@@ -50,27 +50,30 @@ model Organization {
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  settings          OrganizationSettings?
-  memberships       Membership[]
-  sessions          Session[]
-  customers         Customer[]
-  products          Product[]
-  productAliases    ProductAlias[]
-  stockAdjustments  StockAdjustment[]
-  auditEvents       AuditEvent[]
-  numberSequences   NumberSequence[]
-  inquiries         Inquiry[]
-  inquiryItems      InquiryItemProposal[]
-  aiInteractions    AiInteraction[]
-  quotations        Quotation[]
-  quotationItems    QuotationItem[]
+  settings           OrganizationSettings?
+  memberships        Membership[]
+  sessions           Session[]
+  customers          Customer[]
+  products           Product[]
+  productAliases     ProductAlias[]
+  stockAdjustments   StockAdjustment[]
+  auditEvents        AuditEvent[]
+  numberSequences    NumberSequence[]
+  inquiries          Inquiry[]
+  inquiryItems       InquiryItemProposal[]
+  aiInteractions     AiInteraction[]
+  quotations         Quotation[]
+  quotationItems     QuotationItem[]
   quotationApprovals QuotationApproval[]
   quotationFollowUps QuotationFollowUp[]
-  salesOrders       SalesOrder[]
-  salesOrderItems   SalesOrderItem[]
-  stockReservations StockReservation[]
-  payments          Payment[]
-  paymentEvidence   PaymentEvidenceFile[]
+  salesOrders        SalesOrder[]
+  salesOrderItems    SalesOrderItem[]
+  stockReservations  StockReservation[]
+  payments           Payment[]
+  paymentEvidence    PaymentEvidenceFile[]
+  warehouseTasks     WarehouseTask[]
+  warehouseTaskItems WarehouseTaskItem[]
+  deliveries         Delivery[]
 
   @@map("organizations")
 }
@@ -97,7 +100,7 @@ model OrganizationSettings {
   /// A cap rather than an open-ended loop: a system that keeps generating follow-ups forever
   /// trains salespeople to ignore the queue, which costs more than the chases are worth. Four
   /// is a starting point, not a finding.
-  maxFollowUpCount        Int @default(4) @map("max_follow_up_count")
+  maxFollowUpCount Int @default(4) @map("max_follow_up_count")
 
   /// Whether a delivery charge attracts VAT at the organization's rate.
   ///
@@ -129,8 +132,10 @@ model User {
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  memberships Membership[]
-  sessions    Session[]
+  memberships    Membership[]
+  sessions       Session[]
+  /// Warehouse tasks this person is picking. Assignment is optional and advisory.
+  warehouseTasks WarehouseTask[] @relation("WarehouseTaskAssignee")
 
   @@map("users")
 }
@@ -214,36 +219,37 @@ model Customer {
 // ---------------------------------------------------------------------------
 
 model Product {
-  id             String  @id @default(uuid()) @db.Uuid
-  organizationId String  @map("organization_id") @db.Uuid
-  sku            String
-  name           String
-  category       String?
+  id                String  @id @default(uuid()) @db.Uuid
+  organizationId    String  @map("organization_id") @db.Uuid
+  sku               String
+  name              String
+  category          String?
   /// Display unit: bag, piece, quintal, m3. Quantities are integers in this unit.
-  unit           String
+  unit              String
   /// Minor units of the organization's currency.
-  sellingPriceMinor BigInt @map("selling_price_minor")
+  sellingPriceMinor BigInt  @map("selling_price_minor")
   /// Basis points (1500 = 15%). Per product, because not everything is taxed alike.
-  taxRateBp      Int     @default(1500) @map("tax_rate_bp")
+  taxRateBp         Int     @default(1500) @map("tax_rate_bp")
 
-  availableStock    Int     @default(0) @map("available_stock")
+  availableStock   Int     @default(0) @map("available_stock")
   /// Held against confirmed sales orders. Phase 4 writes this; nothing reserves at quotation
   /// time — see architecture-baseline.md 7.3.
-  reservedStock     Int     @default(0) @map("reserved_stock")
-  reorderThreshold  Int     @default(0) @map("reorder_threshold")
-  active            Boolean @default(true)
+  reservedStock    Int     @default(0) @map("reserved_stock")
+  reorderThreshold Int     @default(0) @map("reorder_threshold")
+  active           Boolean @default(true)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  aliases          ProductAlias[]
-  stockAdjustments StockAdjustment[]
+  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aliases              ProductAlias[]
+  stockAdjustments     StockAdjustment[]
   matchedInquiryItems  InquiryItemProposal[] @relation("MatchedProduct")
   proposedInquiryItems InquiryItemProposal[] @relation("ProposedProduct")
   quotationItems       QuotationItem[]
   salesOrderItems      SalesOrderItem[]
   stockReservations    StockReservation[]
+  warehouseTaskItems   WarehouseTaskItem[]
 
   @@unique([organizationId, sku])
   @@index([organizationId])
@@ -261,16 +267,16 @@ enum AliasSource {
 /// "rebar 12" all mean Rebar 12mm. A table rather than an array column, because this is
 /// searched by trigram similarity in Phase 2 and audited when a salesperson adds one.
 model ProductAlias {
-  id             String      @id @default(uuid()) @db.Uuid
-  organizationId String      @map("organization_id") @db.Uuid
-  productId      String      @map("product_id") @db.Uuid
+  id              String      @id @default(uuid()) @db.Uuid
+  organizationId  String      @map("organization_id") @db.Uuid
+  productId       String      @map("product_id") @db.Uuid
   /// As written by a human.
-  alias          String
+  alias           String
   /// Lowercased, punctuation-stripped, whitespace-collapsed. What matching compares against.
-  normalizedAlias String     @map("normalized_alias")
-  source         AliasSource @default(MANUAL)
-  createdById    String?     @map("created_by_id") @db.Uuid
-  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  normalizedAlias String      @map("normalized_alias")
+  source          AliasSource @default(MANUAL)
+  createdById     String?     @map("created_by_id") @db.Uuid
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -347,6 +353,8 @@ model AuditEvent {
 enum SequenceKind {
   QUOTATION
   ORDER
+  WAREHOUSE_TASK
+  DELIVERY
 }
 
 /// Q-000001 and SO-000001. Allocated under a row lock so two salespeople clicking at the same
@@ -407,35 +415,35 @@ model Inquiry {
   channel        InquiryChannel @default(MANUAL)
 
   /// Exactly what the customer sent. Untrusted input, and evidence: never rewritten.
-  rawMessage     String         @map("raw_message")
+  rawMessage         String        @map("raw_message")
   /// Whitespace-collapsed form used for display and fingerprinting. Not a translation.
-  normalizedText String         @map("normalized_text")
+  normalizedText     String        @map("normalized_text")
   /// BCP-47-ish tag as detected by the parser. Advisory only; nothing is gated on it.
-  detectedLanguage String?      @map("detected_language")
-  intent         InquiryIntent  @default(UNKNOWN)
+  detectedLanguage   String?       @map("detected_language")
+  intent             InquiryIntent @default(UNKNOWN)
   /// Free text the parser found for a delivery destination. Never geocoded in this phase.
-  destinationText String?       @map("destination_text")
+  destinationText    String?       @map("destination_text")
   /// A customer name the parser read out of the text, when no customer was selected.
-  parsedCustomerName String?    @map("parsed_customer_name")
+  parsedCustomerName String?       @map("parsed_customer_name")
 
-  status           InquiryStatus @default(RECEIVED)
-  assignedUserId   String?       @map("assigned_user_id") @db.Uuid
-  createdById      String?       @map("created_by_id") @db.Uuid
+  status         InquiryStatus @default(RECEIVED)
+  assignedUserId String?       @map("assigned_user_id") @db.Uuid
+  createdById    String?       @map("created_by_id") @db.Uuid
 
   /// Why the last parse attempt failed, when it did. Cleared on a successful re-parse.
-  parseError     String?   @map("parse_error")
-  parsedAt       DateTime? @map("parsed_at") @db.Timestamptz(6)
-  reviewedAt     DateTime? @map("reviewed_at") @db.Timestamptz(6)
-  readyAt        DateTime? @map("ready_at") @db.Timestamptz(6)
+  parseError String?   @map("parse_error")
+  parsedAt   DateTime? @map("parsed_at") @db.Timestamptz(6)
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  readyAt    DateTime? @map("ready_at") @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  customer     Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  items        InquiryItemProposal[]
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  customer       Customer?             @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  items          InquiryItemProposal[]
   aiInteractions AiInteraction[]
-  quotations   Quotation[]
+  quotations     Quotation[]
 
   @@index([organizationId])
   @@index([organizationId, status])
@@ -485,15 +493,15 @@ model InquiryItemProposal {
   requestedUnit     String? @map("requested_unit")
 
   /// --- the machine's proposal, frozen at parse time ---
-  proposedProductId String?     @map("proposed_product_id") @db.Uuid
-  proposedConfidence Decimal?   @map("proposed_confidence") @db.Decimal(5, 4)
-  matchMethod       MatchMethod @default(UNRESOLVED) @map("match_method")
+  proposedProductId  String?     @map("proposed_product_id") @db.Uuid
+  proposedConfidence Decimal?    @map("proposed_confidence") @db.Decimal(5, 4)
+  matchMethod        MatchMethod @default(UNRESOLVED) @map("match_method")
   /// Human-readable explanation of how the score was reached. Shown in the UI verbatim.
-  matchReason       String      @default("") @map("match_reason")
+  matchReason        String      @default("") @map("match_reason")
   /// Runners-up, so the reviewer can pick without searching. [{productId,name,sku,confidence}]
-  candidates        Json?
+  candidates         Json?
   /// Set when two candidates were too close to separate. Forces review regardless of score.
-  ambiguous         Boolean     @default(false)
+  ambiguous          Boolean     @default(false)
 
   /// --- the human's decision ---
   matchedProductId String?          @map("matched_product_id") @db.Uuid
@@ -520,23 +528,23 @@ model InquiryItemProposal {
 /// personal data into a table nobody prunes. What is kept is what makes a bad parse
 /// diagnosable: who answered, which prompt asked, and whether the answer validated.
 model AiInteraction {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @map("organization_id") @db.Uuid
-  inquiryId      String?  @map("inquiry_id") @db.Uuid
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  inquiryId      String? @map("inquiry_id") @db.Uuid
 
-  purpose      String
-  provider     String
-  model        String
-  promptVersion String  @map("prompt_version")
+  purpose          String
+  provider         String
+  model            String
+  promptVersion    String @map("prompt_version")
   /// SHA-256 of the input. Lets identical inputs be correlated without storing the text.
   inputFingerprint String @map("input_fingerprint")
 
   /// Did the response satisfy its Zod schema?
-  valid        Boolean
+  valid     Boolean
   /// Short machine-readable failure code when it did not. Never a raw provider payload.
-  errorCode    String?  @map("error_code")
-  itemCount    Int?     @map("item_count")
-  latencyMs    Int?     @map("latency_ms")
+  errorCode String? @map("error_code")
+  itemCount Int?    @map("item_count")
+  latencyMs Int?    @map("latency_ms")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
@@ -632,12 +640,12 @@ model Quotation {
   /// The level the rules engine required at the moment of the last recalculation.
   requiredLevel       ApprovalLevel @default(SALESPERSON) @map("required_level")
 
-  createdById  String?   @map("created_by_id") @db.Uuid
-  approvedById String?   @map("approved_by_id") @db.Uuid
-  approvedAt   DateTime? @map("approved_at") @db.Timestamptz(6)
-  submittedAt  DateTime? @map("submitted_at") @db.Timestamptz(6)
-  sentById     String?   @map("sent_by_id") @db.Uuid
-  sentAt       DateTime? @map("sent_at") @db.Timestamptz(6)
+  createdById      String?           @map("created_by_id") @db.Uuid
+  approvedById     String?           @map("approved_by_id") @db.Uuid
+  approvedAt       DateTime?         @map("approved_at") @db.Timestamptz(6)
+  submittedAt      DateTime?         @map("submitted_at") @db.Timestamptz(6)
+  sentById         String?           @map("sent_by_id") @db.Uuid
+  sentAt           DateTime?         @map("sent_at") @db.Timestamptz(6)
   /// --- Phase 4: what the customer said ---
   ///
   /// This is a record that staff were told the customer accepted. It is not, and must not be
@@ -651,7 +659,7 @@ model Quotation {
   rejectedById    String?          @map("rejected_by_id") @db.Uuid
   rejectionReason RejectionReason? @map("rejection_reason")
   rejectionNote   String?          @map("rejection_note")
-  expiredAt    DateTime? @map("expired_at") @db.Timestamptz(6)
+  expiredAt       DateTime?        @map("expired_at") @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -729,13 +737,13 @@ model QuotationApproval {
   organizationId String @map("organization_id") @db.Uuid
   quotationId    String @map("quotation_id") @db.Uuid
 
-  approverId   String        @map("approver_id") @db.Uuid
+  approverId    String        @map("approver_id") @db.Uuid
   /// The approver's role at the moment of the decision, not looked up later.
-  approverRole Role          @map("approver_role")
+  approverRole  Role          @map("approver_role")
   /// The level the rules engine required when the decision was made.
   requiredLevel ApprovalLevel @map("required_level")
   /// The exact payload this decision was given for.
-  payloadHash  String        @map("payload_hash")
+  payloadHash   String        @map("payload_hash")
 
   decision ApprovalDecision
   reason   String?
@@ -878,9 +886,9 @@ model SalesOrder {
   quotationId String @map("quotation_id") @db.Uuid
   customerId  String @map("customer_id") @db.Uuid
 
-  status             SalesOrderStatus       @default(OPEN)
-  paymentStatus      OrderPaymentStatus     @map("payment_status")
-  fulfillmentStatus  OrderFulfillmentStatus @default(NOT_READY) @map("fulfillment_status")
+  status            SalesOrderStatus       @default(OPEN)
+  paymentStatus     OrderPaymentStatus     @map("payment_status")
+  fulfillmentStatus OrderFulfillmentStatus @default(NOT_READY) @map("fulfillment_status")
 
   currency         String      @db.VarChar(3)
   paymentType      PaymentType @map("payment_type")
@@ -901,20 +909,33 @@ model SalesOrder {
   /// not silently redirect goods already promised somewhere else.
   deliveryAddressSnapshot String? @map("delivery_address_snapshot")
 
-  cancelledAt     DateTime? @map("cancelled_at") @db.Timestamptz(6)
-  cancelledById   String?   @map("cancelled_by_id") @db.Uuid
-  cancellationReason String? @map("cancellation_reason")
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledById      String?   @map("cancelled_by_id") @db.Uuid
+  cancellationReason String?   @map("cancellation_reason")
+
+  /// Phase 6. Operational completion — goods reached the customer. Says nothing about money:
+  /// a delivered 30-day-credit order is COMPLETED and still owes its balance.
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  /// The collection path, for an order that needs no delivery. A lightweight pair of fields
+  /// rather than a Delivery row that never leaves the yard — inventing a delivery for a
+  /// customer who drove in would make the delivery queue lie about what is on the road.
+  pickedUpAt   DateTime? @map("picked_up_at") @db.Timestamptz(6)
+  pickedUpById String?   @map("picked_up_by_id") @db.Uuid
+  pickupNote   String?   @map("pickup_note")
 
   createdById String?  @map("created_by_id") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  quotation    Quotation          @relation(fields: [quotationId], references: [id], onDelete: Restrict)
-  customer     Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  items        SalesOrderItem[]
-  reservations StockReservation[]
-  payments     Payment[]
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotation      Quotation          @relation(fields: [quotationId], references: [id], onDelete: Restrict)
+  customer       Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  items          SalesOrderItem[]
+  reservations   StockReservation[]
+  payments       Payment[]
+  warehouseTasks WarehouseTask[]
+  deliveries     Delivery[]
 
   @@unique([organizationId, orderNumber])
   @@index([organizationId])
@@ -956,10 +977,11 @@ model SalesOrderItem {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  salesOrder   SalesOrder         @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
-  product      Product?           @relation(fields: [productId], references: [id], onDelete: SetNull)
-  reservations StockReservation[]
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  salesOrder     SalesOrder          @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  product        Product?            @relation(fields: [productId], references: [id], onDelete: SetNull)
+  reservations   StockReservation[]
+  warehouseItems WarehouseTaskItem[]
 
   @@index([organizationId])
   @@index([salesOrderId])
@@ -1056,12 +1078,12 @@ model PaymentEvidenceFile {
   organizationId String @map("organization_id") @db.Uuid
 
   /// Opaque key in the FileStore. Not a path, not a filename, not guessable.
-  storageKey  String @map("storage_key")
+  storageKey       String  @map("storage_key")
   /// SHA-256 of the stored bytes, hex.
-  contentHash String @map("content_hash")
+  contentHash      String  @map("content_hash")
   /// Detected from the bytes, not from what the browser claimed.
-  mimeType    String @map("mime_type")
-  sizeBytes   Int    @map("size_bytes")
+  mimeType         String  @map("mime_type")
+  sizeBytes        Int     @map("size_bytes")
   /// Kept for display only. Never used to locate or identify the file.
   originalFilename String? @map("original_filename")
 
@@ -1094,13 +1116,13 @@ model Payment {
   /// What Finance actually confirmed. Null until confirmation; never edited afterwards.
   amountConfirmedMinor BigInt? @map("amount_confirmed_minor")
 
-  method       PaymentMethod
-  providerName String?  @map("provider_name")
+  method               PaymentMethod
+  providerName         String?       @map("provider_name")
   /// Bank or wallet transaction reference, as read or typed. Uniqueness is enforced across
   /// CONFIRMED payments per organization and provider — see the migration.
-  transactionReference String? @map("transaction_reference")
-  payerName    String?  @map("payer_name")
-  paymentDate  DateTime? @map("payment_date") @db.Date
+  transactionReference String?       @map("transaction_reference")
+  payerName            String?       @map("payer_name")
+  paymentDate          DateTime?     @map("payment_date") @db.Date
 
   evidenceFileId   String?          @map("evidence_file_id") @db.Uuid
   extractionStatus ExtractionStatus @default(NOT_ATTEMPTED) @map("extraction_status")
@@ -1134,4 +1156,173 @@ model Payment {
   @@index([salesOrderId])
   @@index([organizationId, transactionReference])
   @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 — warehouse fulfilment and delivery
+// ---------------------------------------------------------------------------
+
+/// The warehouse side of an order, kept separate from both payment and delivery on purpose.
+///
+/// Three axes, three owners. Finance decides whether money arrived; the warehouse decides
+/// whether goods were picked and handed over; the driver decides whether they reached the
+/// customer. Collapsing any pair into one status is how a distributor ends up releasing goods
+/// because someone needed a value for "done".
+enum WarehouseTaskStatus {
+  PENDING
+  IN_PROGRESS
+  /// Physically picked and assembled, still in warehouse custody. No inventory has moved.
+  PREPARED
+  /// Goods have left warehouse custody. This — and only this — consumes stock.
+  COMPLETED
+  CANCELLED
+}
+
+enum WarehouseTaskItemStatus {
+  PENDING
+  PREPARED
+}
+
+model WarehouseTask {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  taskNumber   String @map("task_number")
+  salesOrderId String @map("sales_order_id") @db.Uuid
+
+  status WarehouseTaskStatus @default(PENDING)
+
+  /// Who is picking it. Optional: a small yard assigns work by talking to each other.
+  assignedUserId String? @map("assigned_user_id") @db.Uuid
+
+  startedAt   DateTime? @map("started_at") @db.Timestamptz(6)
+  preparedAt  DateTime? @map("prepared_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancellationReason String?   @map("cancellation_reason")
+
+  notes String?
+
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  salesOrder   SalesOrder          @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  assignedUser User?               @relation("WarehouseTaskAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  items        WarehouseTaskItem[]
+  deliveries   Delivery[]
+
+  @@unique([organizationId, taskNumber])
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([salesOrderId])
+  @@map("warehouse_tasks")
+}
+
+/// One row per order line the warehouse must pick.
+///
+/// Explicit rows rather than reading the order lines directly, because a refusal has to name a
+/// product and two quantities — "reservation mismatch on Rebar 12mm: 80 required, 60 active" is
+/// actionable and "this order cannot be completed" is not. They also carry the snapshots
+/// forward one more time, so nothing the warehouse reads can be changed by editing the
+/// catalogue.
+model WarehouseTaskItem {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  warehouseTaskId  String  @map("warehouse_task_id") @db.Uuid
+  salesOrderItemId String  @map("sales_order_item_id") @db.Uuid
+  productId        String? @map("product_id") @db.Uuid
+
+  skuSnapshot         String @map("sku_snapshot")
+  descriptionSnapshot String @map("description_snapshot")
+  unitSnapshot        String @map("unit_snapshot")
+
+  quantityRequired Int @map("quantity_required")
+  /// 0 or the full required quantity. Phase 6 has no partial fulfilment: a half-picked line is
+  /// an unfinished task, never a partly-shipped order.
+  quantityPrepared Int @default(0) @map("quantity_prepared")
+
+  status WarehouseTaskItemStatus @default(PENDING)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  warehouseTask  WarehouseTask  @relation(fields: [warehouseTaskId], references: [id], onDelete: Cascade)
+  salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
+  product        Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([warehouseTaskId])
+  @@map("warehouse_task_items")
+}
+
+enum DeliveryStatus {
+  PENDING
+  ASSIGNED
+  DISPATCHED
+  DELIVERED
+  /// Goods left the warehouse and did not reach the customer. Deliberately *not* a return:
+  /// nothing here puts stock back, because the goods are still out there somewhere.
+  FAILED
+  CANCELLED
+}
+
+enum DeliveryFailureReason {
+  CUSTOMER_UNAVAILABLE
+  WRONG_ADDRESS
+  VEHICLE_ISSUE
+  CUSTOMER_REJECTED
+  OTHER
+}
+
+/// A delivery run for one order.
+///
+/// Every customer-facing field is snapshotted at creation. A delivery record is history, and
+/// history that rewrites itself when someone edits a customer's phone number is not history.
+model Delivery {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  deliveryNumber  String @map("delivery_number")
+  salesOrderId    String @map("sales_order_id") @db.Uuid
+  warehouseTaskId String @map("warehouse_task_id") @db.Uuid
+
+  status DeliveryStatus @default(PENDING)
+
+  customerNameSnapshot    String  @map("customer_name_snapshot")
+  customerPhoneSnapshot   String? @map("customer_phone_snapshot")
+  destinationTextSnapshot String  @map("destination_text_snapshot")
+
+  /// Plain operational fields, not a fleet. There are no driver accounts and no vehicle table:
+  /// a pilot distributor has three drivers and knows their names.
+  assignedDriverName  String?   @map("assigned_driver_name")
+  assignedDriverPhone String?   @map("assigned_driver_phone")
+  vehicleReference    String?   @map("vehicle_reference")
+  assignedAt          DateTime? @map("assigned_at") @db.Timestamptz(6)
+
+  dispatchedAt DateTime? @map("dispatched_at") @db.Timestamptz(6)
+  deliveredAt  DateTime? @map("delivered_at") @db.Timestamptz(6)
+  failedAt     DateTime? @map("failed_at") @db.Timestamptz(6)
+
+  failureReason DeliveryFailureReason? @map("failure_reason")
+  failureNote   String?                @map("failure_note")
+  /// What staff wrote down. Not proof of delivery — there is no signature and no photo.
+  deliveryNote  String?                @map("delivery_note")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  salesOrder    SalesOrder    @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  warehouseTask WarehouseTask @relation(fields: [warehouseTaskId], references: [id], onDelete: Restrict)
+
+  @@unique([organizationId, deliveryNumber])
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([salesOrderId])
+  @@map("deliveries")
 }

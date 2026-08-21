@@ -72,6 +72,12 @@ describe('the matrix', () => {
       'approve:customer-message',
       'set:customer-credit',
       'cancel:order',
+      'read:warehouse-task',
+      'read:delivery',
+      'assign:delivery',
+      'dispatch:delivery',
+      'complete:delivery',
+      'fail:delivery',
     ],
     SALESPERSON: [
       'read:dashboard',
@@ -97,6 +103,8 @@ describe('the matrix', () => {
       'create:sales-order',
       'submit:payment-evidence',
       'approve:customer-message',
+      'read:warehouse-task',
+      'read:delivery',
     ],
     FINANCE: [
       'read:dashboard',
@@ -111,6 +119,8 @@ describe('the matrix', () => {
       'reject:payment',
       'set:customer-credit',
       'approve:customer-message',
+      'read:warehouse-task',
+      'read:delivery',
     ],
     WAREHOUSE: [
       'read:dashboard',
@@ -119,9 +129,12 @@ describe('the matrix', () => {
       'read:warehouse',
       'read:delivery',
       'adjust:stock',
+      'read:warehouse-task',
+      'create:warehouse-task',
+      'start:warehouse-task',
       'prepare:warehouse-task',
-      'dispatch:delivery',
-      'complete:delivery',
+      'complete:warehouse-task',
+      'record:pickup',
     ],
   };
 
@@ -284,6 +297,81 @@ describe('separation of duties', () => {
     expect(can('FINANCE', 'create:sales-order')).toBe(false);
     expect(can('WAREHOUSE', 'create:sales-order')).toBe(false);
     expect(can('WAREHOUSE', 'cancel:order')).toBe(false);
+  });
+
+  it('separates handing goods out from picking them', () => {
+    // Completing a task consumes stock: quantity leaves the yard and a reservation becomes
+    // history. Picking is reversible; that is not. Distinct permissions so a future picker role
+    // can hold one without the other, even though a small yard grants both today.
+    expect(PERMISSIONS).toContain('start:warehouse-task');
+    expect(PERMISSIONS).toContain('prepare:warehouse-task');
+    expect(PERMISSIONS).toContain('complete:warehouse-task');
+    expect(can('WAREHOUSE', 'complete:warehouse-task')).toBe(true);
+  });
+
+  it('does not let the warehouse close an order end to end on its own', () => {
+    // The warehouse hands goods out. Declaring them delivered is somebody else's signature —
+    // otherwise one role could ship and sign for the same goods with nobody else involved.
+    expect(can('WAREHOUSE', 'complete:warehouse-task')).toBe(true);
+    expect(can('WAREHOUSE', 'dispatch:delivery')).toBe(false);
+    expect(can('WAREHOUSE', 'complete:delivery')).toBe(false);
+    expect(can('WAREHOUSE', 'fail:delivery')).toBe(false);
+    expect(can('WAREHOUSE', 'assign:delivery')).toBe(false);
+    // It can still see where its own work went.
+    expect(can('WAREHOUSE', 'read:delivery')).toBe(true);
+  });
+
+  it('lets the warehouse record a collection, because it hands the goods over', () => {
+    expect(can('WAREHOUSE', 'record:pickup')).toBe(true);
+    expect(can('SALESPERSON', 'record:pickup')).toBe(false);
+    expect(can('FINANCE', 'record:pickup')).toBe(false);
+  });
+
+  it('keeps the road with the sales manager, for want of a logistics role', () => {
+    // There is no dedicated logistics role in this product, and inventing one to hold four
+    // permissions would be a worse answer than using the narrowest existing fit.
+    for (const permission of [
+      'assign:delivery',
+      'dispatch:delivery',
+      'complete:delivery',
+      'fail:delivery',
+    ] as const) {
+      expect(can('SALES_MANAGER', permission)).toBe(true);
+      expect(can('SALESPERSON', permission)).toBe(false);
+      expect(can('FINANCE', permission)).toBe(false);
+      expect(can('WAREHOUSE', permission)).toBe(false);
+    }
+  });
+
+  it('lets a salesperson watch fulfilment without moving any of it', () => {
+    expect(can('SALESPERSON', 'read:warehouse-task')).toBe(true);
+    expect(can('SALESPERSON', 'read:delivery')).toBe(true);
+    for (const permission of [
+      'create:warehouse-task',
+      'start:warehouse-task',
+      'prepare:warehouse-task',
+      'complete:warehouse-task',
+      'cancel:warehouse-task',
+    ] as const) {
+      expect(can('SALESPERSON', permission)).toBe(false);
+    }
+  });
+
+  it('lets finance see whether goods went out, and touch nothing', () => {
+    // Whether an order shipped changes what to say to a debtor. It does not make finance a
+    // warehouse.
+    expect(can('FINANCE', 'read:warehouse-task')).toBe(true);
+    expect(can('FINANCE', 'read:delivery')).toBe(true);
+    expect(can('FINANCE', 'complete:warehouse-task')).toBe(false);
+    expect(can('FINANCE', 'dispatch:delivery')).toBe(false);
+  });
+
+  it('keeps stock consumption away from everyone who sells', () => {
+    // Consumption is the only operation that permanently removes physical quantity. Nobody who
+    // negotiates a price should be able to perform it.
+    for (const role of ['SALESPERSON', 'SALES_MANAGER', 'FINANCE'] as const) {
+      expect(can(role, 'complete:warehouse-task')).toBe(false);
+    }
   });
 
   it('does not let a write permission carry stock authority', () => {
