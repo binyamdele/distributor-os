@@ -7,11 +7,11 @@ The narrow promise:
 > Turn customer inquiries into quotations, orders, follow-ups, payments and delivery handoffs
 > with dramatically less manual work.
 
-**Status: Phase 3 of 8 — quotations.** The foundation and inquiry parsing, plus: a reviewed
-inquiry becomes a priced quotation with snapshotted catalogue prices, deterministic VAT and
-totals, a rules-driven approval requirement, and an approval bound to the exact figures it was
-given. Follow-ups, orders, payments, warehouse and delivery handoff are **not built yet**. See
-[what exists](#what-exists) for the honest split.
+**Status: Phase 4 of 8 — follow-ups, orders and stock reservations.** Everything through
+quotations, plus: a sent quotation enters a deterministic follow-up queue, staff record what the
+customer said, and an accepted quotation becomes a sales order carrying its snapshots exactly,
+with stock reserved atomically or not at all. Payments, warehouse and delivery handoff are **not
+built yet**. See [what exists](#what-exists) for the honest split.
 
 ---
 
@@ -99,17 +99,21 @@ see its customers or its gravel while signed in to Addis Build Supply, something
 
 | Built and tested | Not built yet |
 |---|---|
-| Organizations, settings, number sequences | Follow-ups and order conversion |
-| Users, memberships, sessions, login | Payment review and finance confirmation |
-| Role-based access control (5 roles, 39 permissions) | Warehouse and delivery handoff |
-| Customers, with credit standing and terms | Dashboard metrics and the daily brief |
-| Products, aliases, stock adjustment with reasons | Real WhatsApp / Telegram / SMS delivery |
-| Inquiry capture, with channel seams | A production AI provider actually exercised |
-| AI parsing behind a provider seam, schema-validated | Stock reservation |
-| Deterministic product matching with explainable confidence | PDF and customer-facing quote links |
-| Salesperson review, correction and the ready-for-quote gate | Quotation expiry and supersede flows |
+| Organizations, settings, number sequences | Payment review and finance confirmation |
+| Users, memberships, sessions, login | Warehouse preparation and delivery handoff |
+| Role-based access control (5 roles, 44 permissions) | Dashboard metrics and the daily brief |
+| Customers, with credit standing and terms | Real WhatsApp / Telegram / SMS delivery |
+| Products, aliases, stock adjustment with reasons | A production AI provider actually exercised |
+| Inquiry capture, with channel seams | Stock consumption on dispatch |
+| AI parsing behind a provider seam, schema-validated | PDF and customer-facing quote links |
+| Deterministic product matching with explainable confidence | Backorders, partial fulfilment, substitution |
+| Salesperson review, correction and the ready-for-quote gate | Quote revision and supersede flows |
 | Quotations with snapshotted prices and deterministic VAT | |
 | A rules-driven approval ladder, bound to a payload hash | |
+| A deterministic follow-up queue, with a cap and no autosend | |
+| Recorded customer acceptance and rejection | |
+| Sales orders built from quotation snapshots | |
+| Transactional stock reservation, all-or-nothing | |
 | Concurrency-safe document numbering | |
 | Append-only audit log with per-tenant ordering | |
 | Three-layer tenant isolation | |
@@ -166,7 +170,9 @@ src/modules/       business logic; no HTTP and no React inside
   customers/
   catalog/         products, aliases, normalisation, deterministic matching, units
   inquiries/       capture, parse orchestration, review, the ready-for-quote gate
-  quotations/      pricing, approval rules, payload fingerprint, lifecycle
+  quotations/      pricing, approval rules, payload fingerprint, lifecycle, acceptance
+  followups/       the chase queue: scheduling, outcomes, the cap
+  orders/          conversion from snapshots, stock reservation, cancellation
   numbering/       concurrency-safe document numbers (Q-000001, SO-000001)
 src/platform/      cross-cutting and domain-free
   ai/              AIProvider seam: contract, mock, Anthropic adapter, prompt
@@ -184,6 +190,7 @@ Other documents:
 
 - [`docs/phase-2-inquiry-parsing.md`](docs/phase-2-inquiry-parsing.md) — the AI trust boundary, the matching algorithm, confidence rules, the state machine and known limitations
 - [`docs/phase-3-quotations.md`](docs/phase-3-quotations.md) — snapshot semantics, the exact money formula, approval rules, the payload fingerprint and concurrency behaviour
+- [`docs/phase-4-orders-and-reservations.md`](docs/phase-4-orders-and-reservations.md) — follow-up rules, acceptance invariants, the order state model, the reservation source of truth and lock ordering
 - [`docs/future-roadmap.md`](docs/future-roadmap.md) — what is deliberately not built, and the seam left for it
 - [`docs/customer-discovery.md`](docs/customer-discovery.md) — interview guide
 - [`docs/validation-scorecard.md`](docs/validation-scorecard.md) — build / pivot / kill criteria

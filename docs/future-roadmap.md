@@ -75,3 +75,20 @@ Extension seams to protect while building the MVP, without building any of them:
 
 The MVP must not be damaged by trying to build any of this prematurely. The point of the
 roadmap is to make deferral cheap, not to schedule the work.
+
+---
+
+## 4. Deferred by the Phase 4 assessment
+
+| Deferred | Why now is wrong | Seam left behind |
+|---|---|---|
+| AI-drafted follow-up messages | Optional in the brief, and the queue must work with a provider unreachable. Reservation correctness was the better use of the phase | The `AIProvider` seam takes a `draftFollowUp` capability without touching the queue |
+| Backorders and partial fulfilment | All-or-nothing reservation is safer for an MVP; a short conversion is refused with exact numbers and a person decides | `planReservation` already computes the per-product shortfall a backorder would need |
+| Product substitution on a short line | Needs an equivalence model nobody has entered | The refusal names the product and the gap |
+| Quote revision after acceptance | An accepted quotation is immutable commercial history; revising it means a superseding quotation, and that flow does not exist | `SUPERSEDED` is in the quotation state machine |
+| Stock consumption on dispatch | Goods leaving the yard is warehouse work | `ReservationStatus.CONSUMED` exists and is unreached |
+| Reassigning a follow-up to another salesperson | Assignment is the sender today; reassignment needs a UI and a policy | `assigned_user_id` is on the row |
+| A sweep that marks quotations `EXPIRED` | Needs a scheduler, which the MVP deliberately lacks | Acceptance already refuses an expired quotation |
+| Paging the follow-up queue | Capped at 200, which is beyond pilot volume | The queue is one query |
+| Snoozing from the original due date rather than from now | Repeated snoozing drifts the schedule; acceptable until it is used heavily | Snooze is one function |
+| A retry policy for lock contention | Deterministic lock ordering removed the need; a retry would have hidden whether the ordering worked | Lock order is one exported function, `lockOrder` |
