@@ -50,6 +50,9 @@ export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'SalesOrder',
   'SalesOrderItem',
   'StockReservation',
+  // Phase 5
+  'Payment',
+  'PaymentEvidenceFile',
 ]);
 
 /**

@@ -68,6 +68,7 @@ describe('the matrix', () => {
       'record:quotation-acceptance',
       'record:quotation-rejection',
       'create:sales-order',
+      'submit:payment-evidence',
       'approve:customer-message',
       'set:customer-credit',
       'cancel:order',
@@ -94,6 +95,7 @@ describe('the matrix', () => {
       'record:quotation-acceptance',
       'record:quotation-rejection',
       'create:sales-order',
+      'submit:payment-evidence',
       'approve:customer-message',
     ],
     FINANCE: [
@@ -102,6 +104,7 @@ describe('the matrix', () => {
       'read:quotation',
       'read:order',
       'read:payment',
+      'review:payment',
       'read:receivables',
       'read:audit',
       'confirm:payment',
@@ -177,6 +180,42 @@ describe('separation of duties', () => {
     expect(PERMISSIONS).toContain('create:quotation');
     expect(PERMISSIONS).toContain('approve:quotation:self_limit');
     expect(PERMISSIONS).toContain('mark:quotation-sent');
+  });
+
+  it('keeps submitting a payment claim separate from confirming one', () => {
+    // The two halves of the review gate. Sales submits because sales is who the customer sends
+    // the screenshot to; Finance confirms. Finance deliberately holds neither the submit
+    // permission nor sales' order permissions, so every confirmed payment has been through two
+    // pairs of hands — which is the entire value of the gate.
+    expect(can('SALESPERSON', 'submit:payment-evidence')).toBe(true);
+    expect(can('SALES_MANAGER', 'submit:payment-evidence')).toBe(true);
+    expect(can('FINANCE', 'submit:payment-evidence')).toBe(false);
+
+    expect(can('SALESPERSON', 'confirm:payment')).toBe(false);
+    expect(can('FINANCE', 'confirm:payment')).toBe(true);
+  });
+
+  it('does not let sales see the payment queue or receivables', () => {
+    expect(can('SALESPERSON', 'read:payment')).toBe(false);
+    expect(can('SALESPERSON', 'review:payment')).toBe(false);
+    expect(can('SALESPERSON', 'read:receivables')).toBe(false);
+    // A sales manager tracks what is owed, but still cannot open the evidence.
+    expect(can('SALES_MANAGER', 'read:receivables')).toBe(true);
+    expect(can('SALES_MANAGER', 'review:payment')).toBe(false);
+  });
+
+  it('keeps warehouse away from payment evidence entirely', () => {
+    // The warehouse needs to know an order is ready. It does not need a customer's bank slip.
+    for (const permission of [
+      'read:payment',
+      'review:payment',
+      'confirm:payment',
+      'submit:payment-evidence',
+      'read:receivables',
+    ] as const) {
+      expect(can('WAREHOUSE', permission)).toBe(false);
+    }
+    expect(can('WAREHOUSE', 'read:order')).toBe(true);
   });
 
   it('does not let warehouse staff touch prices or customers', () => {

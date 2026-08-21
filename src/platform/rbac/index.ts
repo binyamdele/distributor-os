@@ -102,6 +102,21 @@ export const PERMISSIONS = [
   'cancel:order',
 
   // --- Money ----------------------------------------------------------------
+  // --- Phase 5: payments ----------------------------------------------------
+  /**
+   * Record that a customer says they paid, and attach evidence.
+   *
+   * Sales holds this, because sales is who the customer sends the screenshot to. It creates a
+   * *claim*: it moves no money and changes no order state, which is exactly why it is a
+   * different permission from confirming one.
+   *
+   * Finance deliberately does **not** hold it. Keeping submission and confirmation in different
+   * hands means every confirmed payment has been seen by two people — which is the whole value
+   * of a review gate, and is lost the moment one person can do both halves.
+   */
+  'submit:payment-evidence',
+  /** Open the verification queue and inspect evidence. Looking is not deciding. */
+  'review:payment',
   /**
    * Confirm that a payment actually arrived. Held by Finance and the owner only. This is the
    * permission that turns a claim into a fact, and nothing else implies it.
@@ -159,6 +174,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'record:quotation-acceptance',
     'record:quotation-rejection',
     'create:sales-order',
+    'submit:payment-evidence',
     'approve:customer-message',
     'set:customer-credit',
     'cancel:order',
@@ -186,6 +202,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'record:quotation-acceptance',
     'record:quotation-rejection',
     'create:sales-order',
+    'submit:payment-evidence',
     'approve:customer-message',
   ],
 
@@ -199,6 +216,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'read:quotation',
     'read:order',
     'read:payment',
+    'review:payment',
     'read:receivables',
     'read:audit',
     'confirm:payment',

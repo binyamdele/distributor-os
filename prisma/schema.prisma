@@ -69,6 +69,8 @@ model Organization {
   salesOrders       SalesOrder[]
   salesOrderItems   SalesOrderItem[]
   stockReservations StockReservation[]
+  payments          Payment[]
+  paymentEvidence   PaymentEvidenceFile[]
 
   @@map("organizations")
 }
@@ -200,6 +202,7 @@ model Customer {
   inquiries    Inquiry[]
   quotations   Quotation[]
   salesOrders  SalesOrder[]
+  payments     Payment[]
 
   @@index([organizationId])
   @@index([organizationId, companyName])
@@ -845,8 +848,15 @@ enum SalesOrderStatus {
 /// may leave are different questions with different owners, and conflating them into one status
 /// enum is how a cash order ends up released because someone needed a value for "ready".
 enum OrderPaymentStatus {
-  /// Cash terms: payment is owed now and has not arrived.
+  /// Cash terms: payment is owed now and nothing has been confirmed.
   UNPAID
+  /// Some confirmed payment has arrived, but not the whole amount.
+  ///
+  /// Added in Phase 5, deliberately. A partly-settled cash order is neither UNPAID nor PAID,
+  /// and collapsing it into either would mislead: UNPAID hides money that genuinely arrived,
+  /// PAID would release goods that are not paid for. Phase 4's rule that a cash order *starts*
+  /// UNPAID and NOT_READY is unchanged.
+  PARTIALLY_PAID
   /// Credit terms: nothing is owed yet, and the due date is the order's payment terms.
   NOT_REQUIRED_YET
   PAID
@@ -904,6 +914,7 @@ model SalesOrder {
   customer     Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
   items        SalesOrderItem[]
   reservations StockReservation[]
+  payments     Payment[]
 
   @@unique([organizationId, orderNumber])
   @@index([organizationId])
@@ -991,4 +1002,136 @@ model StockReservation {
   @@index([salesOrderId])
   @@index([organizationId, productId, status])
   @@map("stock_reservations")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 5 — Payment evidence, confirmation and receivables
+//
+// The organising idea is that "money arrived" is a claim until a specific person says
+// otherwise. Three separate things are modelled, and only the third is authoritative:
+//
+//   claimed     someone says a customer paid, and attaches evidence
+//   extracted   software reads candidate figures off that evidence
+//   confirmed   a Finance user checks both against the order and puts their name to it
+//
+// Nothing in this file lets the first two move an order's payment state.
+// ---------------------------------------------------------------------------
+
+enum PaymentStatus {
+  /// Evidence is in, nothing has looked at it yet.
+  SUBMITTED
+  /// Extraction ran (or failed) and a person must now decide.
+  NEEDS_REVIEW
+  /// A Finance user confirmed this exact payload. Immutable from here.
+  CONFIRMED
+  REJECTED
+}
+
+/// What the submitter claims the evidence represents. Not proof of settlement — no provider is
+/// integrated, and none of these is verified against anything.
+enum PaymentMethod {
+  BANK_TRANSFER
+  TELEBIRR
+  MOBILE_MONEY
+  CASH_DEPOSIT
+  OTHER
+}
+
+enum ExtractionStatus {
+  /// No extractor has run — the metadata was typed by a person.
+  NOT_ATTEMPTED
+  SUCCEEDED
+  /// The extractor answered in a shape the contract refuses. Recoverable: a person types it.
+  SCHEMA_INVALID
+  FAILED
+}
+
+/// Uploaded evidence: a screenshot, a photograph of a slip, or a PDF.
+///
+/// Stored under an opaque id in a FileStore, never under a filename and never in a public
+/// directory. `contentHash` is the identity that matters: a confirmation binds to the exact
+/// bytes a Finance user reviewed, so swapping the file afterwards cannot inherit the approval.
+model PaymentEvidenceFile {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  /// Opaque key in the FileStore. Not a path, not a filename, not guessable.
+  storageKey  String @map("storage_key")
+  /// SHA-256 of the stored bytes, hex.
+  contentHash String @map("content_hash")
+  /// Detected from the bytes, not from what the browser claimed.
+  mimeType    String @map("mime_type")
+  sizeBytes   Int    @map("size_bytes")
+  /// Kept for display only. Never used to locate or identify the file.
+  originalFilename String? @map("original_filename")
+
+  uploadedById String?  @map("uploaded_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  payments     Payment[]
+
+  @@index([organizationId])
+  @@map("payment_evidence_files")
+}
+
+/// One claimed payment against one sales order.
+///
+/// Several are permitted per order from the outset. Ethiopian B2B customers split transfers,
+/// and a schema that assumed one payment per order would need migrating the first time that
+/// happened — which is exactly when a business least wants a migration.
+model Payment {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  salesOrderId   String @map("sales_order_id") @db.Uuid
+  customerId     String @map("customer_id") @db.Uuid
+
+  status   PaymentStatus @default(SUBMITTED)
+  currency String        @db.VarChar(3)
+
+  /// What the submitter says was paid.
+  amountClaimedMinor   BigInt  @map("amount_claimed_minor")
+  /// What Finance actually confirmed. Null until confirmation; never edited afterwards.
+  amountConfirmedMinor BigInt? @map("amount_confirmed_minor")
+
+  method       PaymentMethod
+  providerName String?  @map("provider_name")
+  /// Bank or wallet transaction reference, as read or typed. Uniqueness is enforced across
+  /// CONFIRMED payments per organization and provider — see the migration.
+  transactionReference String? @map("transaction_reference")
+  payerName    String?  @map("payer_name")
+  paymentDate  DateTime? @map("payment_date") @db.Date
+
+  evidenceFileId   String?          @map("evidence_file_id") @db.Uuid
+  extractionStatus ExtractionStatus @default(NOT_ATTEMPTED) @map("extraction_status")
+  /// Short machine-readable reason an extraction failed. Never a raw provider payload.
+  extractionError  String?          @map("extraction_error")
+
+  /// The deterministic factors the matcher found, as [{code, detail}]. Shown verbatim to
+  /// Finance rather than reduced to a single invented score.
+  matchFactors Json? @map("match_factors")
+
+  submittedById String   @map("submitted_by_id") @db.Uuid
+  submittedAt   DateTime @default(now()) @map("submitted_at") @db.Timestamptz(6)
+
+  reviewedById    String?   @map("reviewed_by_id") @db.Uuid
+  reviewedAt      DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  rejectionReason String?   @map("rejection_reason")
+
+  /// The hash of the exact payload Finance confirmed, including the evidence content hash.
+  confirmationPayloadHash String? @map("confirmation_payload_hash")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  salesOrder   SalesOrder           @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  customer     Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  evidenceFile PaymentEvidenceFile? @relation(fields: [evidenceFileId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([salesOrderId])
+  @@index([organizationId, transactionReference])
+  @@map("payments")
 }
