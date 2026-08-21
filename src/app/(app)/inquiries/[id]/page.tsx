@@ -11,6 +11,7 @@ import { Badge, Card, EmptyState, PageHeader, TableWrap, Td, Th } from '@/compon
 import { STATUS_TONE, statusKey } from '../page';
 import { AddItemForm, ItemReview } from './item-review';
 import { MarkReadyButton, ParseButton } from './parse-controls';
+import { CreateQuotationForm } from './create-quotation';
 
 /**
  * The review screen.
@@ -40,6 +41,8 @@ export default async function InquiryDetailPage({ params }: { params: Promise<{ 
   const canReview = can(session.role, 'review:inquiry-match');
   const canParse = can(session.role, 'parse:inquiry');
   const editable = canReview && (inquiry.status === 'NEEDS_REVIEW' || inquiry.status === 'READY_FOR_QUOTE');
+
+  const creditAllowed = inquiry.customer?.creditStatus === 'CREDIT_ALLOWED';
 
   const productOptions = products.map((product) => ({
     id: product.id,
@@ -111,6 +114,21 @@ export default async function InquiryDetailPage({ params }: { params: Promise<{ 
         <Card className="mb-6 border-positive/30 bg-positive-soft">
           <h3 className="text-sm font-semibold text-positive">{t('inquiry.ready')}</h3>
           <p className="mt-1 text-sm text-ink">{t('inquiry.readyExplain')}</p>
+
+          {can(session.role, 'create:quotation') ? (
+            inquiry.customer ? (
+              <div className="mt-4">
+                <CreateQuotationForm
+                  inquiryId={inquiry.id}
+                  creditAllowed={creditAllowed}
+                />
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-ink-muted">
+                Attach a customer to this inquiry before drafting a quotation.
+              </p>
+            )
+          ) : null}
         </Card>
       ) : null}
 
