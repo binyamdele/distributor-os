@@ -2,6 +2,7 @@ import 'server-only';
 import { z } from 'zod';
 import type { TenantTransaction } from '@/platform/db';
 import type { ActorContext } from '@/platform/context';
+import { isUuid } from '@/platform/ids';
 import { type Result, fail, ok } from '@/platform/result';
 import { recordAudit } from '@/modules/audit';
 import { allocateDocumentNumber } from '@/modules/numbering';
@@ -31,7 +32,19 @@ export * from './reservation';
 export const ORDER_STATUSES = ['OPEN', 'CANCELLED', 'COMPLETED'] as const;
 export type SalesOrderStatus = (typeof ORDER_STATUSES)[number];
 
-export const PAYMENT_STATUSES = ['UNPAID', 'NOT_REQUIRED_YET', 'PAID'] as const;
+/**
+ * `PARTIALLY_PAID` was added in Phase 5, when confirmed payments became real.
+ *
+ * A part-settled order is neither of the other two, and collapsing it into either misleads:
+ * UNPAID hides money that genuinely arrived, PAID would release goods that are not paid for.
+ * The Phase 4 rule that a cash order *starts* UNPAID and NOT_READY is unchanged.
+ */
+export const PAYMENT_STATUSES = [
+  'UNPAID',
+  'PARTIALLY_PAID',
+  'NOT_REQUIRED_YET',
+  'PAID',
+] as const;
 export type OrderPaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
 export const FULFILLMENT_STATUSES = ['NOT_READY', 'READY', 'CANCELLED'] as const;
@@ -334,6 +347,8 @@ export async function cancelOrder(
   orderId: string,
   reason: string,
 ): Promise<Result<{ released: number; alreadyCancelled: boolean }>> {
+  if (!isUuid(orderId)) return fail('NOT_FOUND', 'error.notFound');
+
   const locked = await tx.$queryRaw<{ id: string }[]>`
     SELECT id FROM sales_orders
      WHERE id = ${orderId}::uuid
@@ -353,6 +368,34 @@ export async function cancelOrder(
 
   if (order.status === 'COMPLETED') {
     return fail('INVALID_STATE_TRANSITION', 'A completed order cannot be cancelled.');
+  }
+
+  /*
+   * An order with money confirmed against it cannot be cancelled.
+   *
+   * Added in Phase 5, when confirmed payments became real. Without it, a cancellation racing a
+   * confirmation could commit second and leave a CANCELLED order carrying a CONFIRMED payment:
+   * the stock released, the money recorded as received, and nothing in the system saying what
+   * is owed back. There is no refund concept yet, so the only coherent answer is to refuse.
+   *
+   * The check is safe under concurrency because it runs *after* the order row lock above, and
+   * `confirmPayment` takes that same lock before it decides. Whichever commits first, the other
+   * sees it: a confirmation arriving after a cancellation is refused by the `ORDER_NOT_OPEN`
+   * blocking factor, and a cancellation arriving after a confirmation is refused here.
+   *
+   * Counted directly rather than through the payments module, so orders keeps no dependency on
+   * it — the two would otherwise reference each other.
+   */
+  const confirmedPayments = await tx.payment.count({
+    where: { salesOrderId: orderId, status: 'CONFIRMED' },
+  });
+  if (confirmedPayments > 0) {
+    return fail(
+      'CONFLICT',
+      `Payment has already been confirmed against ${order.orderNumber}, so it cannot be cancelled. Record a refund against it instead.`,
+      { confirmedPayments },
+      true,
+    );
   }
 
   const active = await tx.stockReservation.findMany({
@@ -483,6 +526,8 @@ export async function getOrder(
   tx: TenantTransaction,
   orderId: string,
 ): Promise<Result<OrderView>> {
+  if (!isUuid(orderId)) return fail('NOT_FOUND', 'error.notFound');
+
   const order = await tx.salesOrder.findFirst({
     where: { id: orderId },
     include: {

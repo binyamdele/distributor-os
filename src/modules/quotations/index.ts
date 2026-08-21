@@ -2,6 +2,7 @@ import 'server-only';
 import { z } from 'zod';
 import type { TenantTransaction } from '@/platform/db';
 import type { ActorContext } from '@/platform/context';
+import { isUuid } from '@/platform/ids';
 import { type Result, fail, ok } from '@/platform/result';
 import type { Role } from '@/platform/rbac';
 import { recordAudit } from '@/modules/audit';
@@ -61,6 +62,10 @@ async function lockQuotation(
   organizationId: string,
   quotationId: string,
 ): Promise<boolean> {
+  // A hand-typed id would make the `::uuid` cast below raise. Every quotation mutation locks
+  // through here, so guarding once covers all of them.
+  if (!isUuid(quotationId)) return false;
+
   const rows = await tx.$queryRaw<{ id: string }[]>`
     SELECT id FROM quotations
      WHERE id = ${quotationId}::uuid
@@ -1471,6 +1476,8 @@ export async function getQuotation(
   tx: TenantTransaction,
   quotationId: string,
 ): Promise<Result<QuotationView>> {
+  if (!isUuid(quotationId)) return fail('NOT_FOUND', 'error.notFound');
+
   const quotation = await tx.quotation.findFirst({
     where: { id: quotationId },
     include: {

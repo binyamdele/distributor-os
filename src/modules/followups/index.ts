@@ -2,6 +2,7 @@ import 'server-only';
 import { z } from 'zod';
 import type { TenantTransaction } from '@/platform/db';
 import type { ActorContext } from '@/platform/context';
+import { isUuid } from '@/platform/ids';
 import { type Result, fail, ok } from '@/platform/result';
 import { recordAudit } from '@/modules/audit';
 
@@ -145,6 +146,8 @@ export async function completeFollowUp(
   if (!parsed.success) {
     return fail('VALIDATION_FAILED', 'Choose an outcome for this follow-up.');
   }
+
+  if (!isUuid(followUpId)) return fail('NOT_FOUND', 'error.notFound');
 
   const followUp = await tx.quotationFollowUp.findFirst({
     where: { id: followUpId },

@@ -2,6 +2,7 @@ import 'server-only';
 import { z } from 'zod';
 import { type TenantTransaction, withTenant } from '@/platform/db';
 import type { ActorContext } from '@/platform/context';
+import { isUuid } from '@/platform/ids';
 import { type Result, fail, ok } from '@/platform/result';
 import { hashString } from '@/platform/security';
 import { aiProvider } from '@/platform/ai';
@@ -401,6 +402,8 @@ export async function getInquiry(
   tx: TenantTransaction,
   id: string,
 ): Promise<Result<InquiryView>> {
+  if (!isUuid(id)) return fail('NOT_FOUND', 'error.notFound');
+
   const inquiry = await tx.inquiry.findFirst({
     where: { id },
     include: {
