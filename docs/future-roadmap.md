@@ -40,6 +40,14 @@ blockchain · unnecessary AI agents.
 | Preserving human review across a re-parse | Carrying a confirmation onto a line that may no longer be the same line is worse than asking again | Proposals are rebuilt wholesale, so a future line-identity scheme has nothing to unpick |
 | Unit conversion (bags ↔ kg, quintal ↔ ton) | Needs a per-product factor nobody has entered; guessing puts a confident wrong number on a quotation | `checkUnit` returns `mismatch` with a reason rather than converting |
 | Amharic alias coverage at scale | A handful are seeded; a real deployment needs many more | Aliases are rows, added without a migration |
+| PDF quotations | A dependency sink, and the in-app view tests the same hypothesis | Quotation rendering is separate from quotation transport |
+| A customer-facing shareable quotation link | Needs a public route, a token scheme and an expiry policy — a security surface of its own | The quotation view already reads only from snapshots |
+| Direct unit-price override | Discounts are explicit and visible to an approver; an edited price hides the size of the concession | `quoted_unit_price_minor` exists and equals list; an override needs no migration |
+| Superseding a sent quotation with a revision | The state exists; the workflow does not | `SUPERSEDED` is in the state machine and reachable |
+| A job that expires quotations past their validity date | Needs a scheduler, which the MVP deliberately does not have | `validityDate` is stored; `EXPIRED` is in the state machine |
+| AI-drafted customer-facing quotation wording | Optional in Phase 3, and correctness came first | The `AIProvider` seam takes a new capability without touching the pricing path |
+| Multi-currency quotations | ETB only | Currency is on the quotation and in the approval payload |
+| A second approval tier above the sales manager | Rule C blocks by design; raising the configured limit is the audited alternative | `ApprovalLevel` is an enum; `rolesSatisfying` is one function |
 | Purchase orders and supplier-side inventory replenishment | Different workflow, different buyer | Stock adjustments carry a reason code |
 
 ---

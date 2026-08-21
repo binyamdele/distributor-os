@@ -7,11 +7,11 @@ The narrow promise:
 > Turn customer inquiries into quotations, orders, follow-ups, payments and delivery handoffs
 > with dramatically less manual work.
 
-**Status: Phase 2 of 8 — inquiry parsing and review.** The foundation, plus: a customer message
-can be pasted in, parsed into schema-validated proposals, matched deterministically against the
-tenant's own catalogue, reviewed and corrected by a salesperson, and declared ready for a
-quotation. Quotations, approvals, follow-ups, orders, payments, warehouse and delivery handoff
-are **not built yet**. See [what exists](#what-exists) for the honest split.
+**Status: Phase 3 of 8 — quotations.** The foundation and inquiry parsing, plus: a reviewed
+inquiry becomes a priced quotation with snapshotted catalogue prices, deterministic VAT and
+totals, a rules-driven approval requirement, and an approval bound to the exact figures it was
+given. Follow-ups, orders, payments, warehouse and delivery handoff are **not built yet**. See
+[what exists](#what-exists) for the honest split.
 
 ---
 
@@ -99,15 +99,18 @@ see its customers or its gravel while signed in to Addis Build Supply, something
 
 | Built and tested | Not built yet |
 |---|---|
-| Organizations, settings, number sequences | Quotations, pricing, approval rules |
-| Users, memberships, sessions, login | Follow-ups and order conversion |
-| Role-based access control (5 roles, 36 permissions) | Payment review and finance confirmation |
-| Customers, with credit standing and terms | Warehouse and delivery handoff |
-| Products, aliases, stock adjustment with reasons | Dashboard metrics and the daily brief |
-| Inquiry capture, with channel seams | Real WhatsApp / Telegram / SMS delivery |
-| AI parsing behind a provider seam, schema-validated | A production AI provider actually exercised |
-| Deterministic product matching with explainable confidence | Stock reservation |
-| Salesperson review, correction and the ready-for-quote gate | |
+| Organizations, settings, number sequences | Follow-ups and order conversion |
+| Users, memberships, sessions, login | Payment review and finance confirmation |
+| Role-based access control (5 roles, 39 permissions) | Warehouse and delivery handoff |
+| Customers, with credit standing and terms | Dashboard metrics and the daily brief |
+| Products, aliases, stock adjustment with reasons | Real WhatsApp / Telegram / SMS delivery |
+| Inquiry capture, with channel seams | A production AI provider actually exercised |
+| AI parsing behind a provider seam, schema-validated | Stock reservation |
+| Deterministic product matching with explainable confidence | PDF and customer-facing quote links |
+| Salesperson review, correction and the ready-for-quote gate | Quotation expiry and supersede flows |
+| Quotations with snapshotted prices and deterministic VAT | |
+| A rules-driven approval ladder, bound to a payload hash | |
+| Concurrency-safe document numbering | |
 | Append-only audit log with per-tenant ordering | |
 | Three-layer tenant isolation | |
 | Money arithmetic in integer minor units | |
@@ -163,6 +166,8 @@ src/modules/       business logic; no HTTP and no React inside
   customers/
   catalog/         products, aliases, normalisation, deterministic matching, units
   inquiries/       capture, parse orchestration, review, the ready-for-quote gate
+  quotations/      pricing, approval rules, payload fingerprint, lifecycle
+  numbering/       concurrency-safe document numbers (Q-000001, SO-000001)
 src/platform/      cross-cutting and domain-free
   ai/              AIProvider seam: contract, mock, Anthropic adapter, prompt
   money/  db/  security/  rbac/  i18n/  config/  result/  context/
@@ -178,6 +183,7 @@ Full reasoning, the domain model, the risk register and what is deliberately exc
 Other documents:
 
 - [`docs/phase-2-inquiry-parsing.md`](docs/phase-2-inquiry-parsing.md) — the AI trust boundary, the matching algorithm, confidence rules, the state machine and known limitations
+- [`docs/phase-3-quotations.md`](docs/phase-3-quotations.md) — snapshot semantics, the exact money formula, approval rules, the payload fingerprint and concurrency behaviour
 - [`docs/future-roadmap.md`](docs/future-roadmap.md) — what is deliberately not built, and the seam left for it
 - [`docs/customer-discovery.md`](docs/customer-discovery.md) — interview guide
 - [`docs/validation-scorecard.md`](docs/validation-scorecard.md) — build / pivot / kill criteria
