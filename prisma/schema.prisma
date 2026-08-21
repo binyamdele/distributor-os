@@ -65,6 +65,10 @@ model Organization {
   quotations        Quotation[]
   quotationItems    QuotationItem[]
   quotationApprovals QuotationApproval[]
+  quotationFollowUps QuotationFollowUp[]
+  salesOrders       SalesOrder[]
+  salesOrderItems   SalesOrderItem[]
+  stockReservations StockReservation[]
 
   @@map("organizations")
 }
@@ -85,6 +89,13 @@ model OrganizationSettings {
   defaultPaymentTermsDays Int @default(30) @map("default_payment_terms_days")
   quoteValidityDays       Int @default(7) @map("quote_validity_days")
   followUpIntervalDays    Int @default(2) @map("follow_up_interval_days")
+
+  /// How many times one quotation may be chased before the sequence stops offering another.
+  ///
+  /// A cap rather than an open-ended loop: a system that keeps generating follow-ups forever
+  /// trains salespeople to ignore the queue, which costs more than the chases are worth. Four
+  /// is a starting point, not a finding.
+  maxFollowUpCount        Int @default(4) @map("max_follow_up_count")
 
   /// Whether a delivery charge attracts VAT at the organization's rate.
   ///
@@ -188,6 +199,7 @@ model Customer {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   inquiries    Inquiry[]
   quotations   Quotation[]
+  salesOrders  SalesOrder[]
 
   @@index([organizationId])
   @@index([organizationId, companyName])
@@ -227,6 +239,8 @@ model Product {
   matchedInquiryItems  InquiryItemProposal[] @relation("MatchedProduct")
   proposedInquiryItems InquiryItemProposal[] @relation("ProposedProduct")
   quotationItems       QuotationItem[]
+  salesOrderItems      SalesOrderItem[]
+  stockReservations    StockReservation[]
 
   @@unique([organizationId, sku])
   @@index([organizationId])
@@ -621,8 +635,19 @@ model Quotation {
   submittedAt  DateTime? @map("submitted_at") @db.Timestamptz(6)
   sentById     String?   @map("sent_by_id") @db.Uuid
   sentAt       DateTime? @map("sent_at") @db.Timestamptz(6)
-  acceptedAt   DateTime? @map("accepted_at") @db.Timestamptz(6)
-  rejectedAt   DateTime? @map("rejected_at") @db.Timestamptz(6)
+  /// --- Phase 4: what the customer said ---
+  ///
+  /// This is a record that staff were told the customer accepted. It is not, and must not be
+  /// presented as, an electronic signature — nothing here authenticates the customer.
+  acceptedAt       DateTime?         @map("accepted_at") @db.Timestamptz(6)
+  acceptedById     String?           @map("accepted_by_id") @db.Uuid
+  acceptanceSource AcceptanceSource? @map("acceptance_source")
+  acceptanceNote   String?           @map("acceptance_note")
+
+  rejectedAt      DateTime?        @map("rejected_at") @db.Timestamptz(6)
+  rejectedById    String?          @map("rejected_by_id") @db.Uuid
+  rejectionReason RejectionReason? @map("rejection_reason")
+  rejectionNote   String?          @map("rejection_note")
   expiredAt    DateTime? @map("expired_at") @db.Timestamptz(6)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -633,6 +658,8 @@ model Quotation {
   inquiry      Inquiry?            @relation(fields: [inquiryId], references: [id], onDelete: SetNull)
   items        QuotationItem[]
   approvals    QuotationApproval[]
+  followUps    QuotationFollowUp[]
+  salesOrders  SalesOrder[]
 
   @@unique([organizationId, quotationNumber])
   @@index([organizationId])
@@ -718,4 +745,250 @@ model QuotationApproval {
   @@index([organizationId])
   @@index([quotationId])
   @@map("quotation_approvals")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — Follow-ups, sales orders and stock reservations
+//
+// Three ideas shape everything below:
+//
+//   1. A follow-up is a task with history, not a flag. "How many times did we chase this and
+//      what did they say" is the question that makes the queue worth having.
+//   2. An order copies the accepted quotation's snapshots exactly. The commercial agreement was
+//      settled at acceptance; re-deriving anything from the live catalogue would change it.
+//   3. Reservation rows are the source of truth for committed stock. `product.reserved_stock`
+//      is a maintained aggregate, kept in the same transaction and asserted by an invariant
+//      test, so it can never drift into an unexplained number.
+// ---------------------------------------------------------------------------
+
+enum FollowUpStatus {
+  DUE
+  COMPLETED
+  SNOOZED
+  CANCELLED
+}
+
+enum FollowUpOutcome {
+  NO_RESPONSE
+  CUSTOMER_CONSIDERING
+  CUSTOMER_REQUESTED_CHANGE
+  CUSTOMER_ACCEPTED
+  CUSTOMER_REJECTED
+  OTHER
+}
+
+/// One chase of one quotation.
+///
+/// A row per attempt rather than a counter on the quotation, so the outcome distribution — how
+/// often "no response" turns into "considering" turns into an order — is a query rather than a
+/// thing nobody recorded.
+model QuotationFollowUp {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  quotationId    String @map("quotation_id") @db.Uuid
+
+  /// 1 for the first chase after sending, 2 for the next, and so on. Capped by
+  /// OrganizationSettings.maxFollowUpCount so the sequence cannot run forever.
+  sequence Int
+
+  dueAt  DateTime       @map("due_at") @db.Timestamptz(6)
+  status FollowUpStatus @default(DUE)
+
+  assignedUserId String? @map("assigned_user_id") @db.Uuid
+
+  completedAt   DateTime?        @map("completed_at") @db.Timestamptz(6)
+  completedById String?          @map("completed_by_id") @db.Uuid
+  outcome       FollowUpOutcome?
+  note          String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotation    Quotation    @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId])
+  @@index([organizationId, status, dueAt])
+  @@index([quotationId])
+  @@map("quotation_follow_ups")
+}
+
+/// How staff learned the customer had accepted. Recorded, never inferred.
+enum AcceptanceSource {
+  PHONE
+  MESSAGE
+  EMAIL
+  IN_PERSON
+  OTHER
+}
+
+/// Why a quotation did not convert. Optional, and worth having: it is the raw material of the
+/// only sales intelligence a distributor actually acts on.
+enum RejectionReason {
+  PRICE
+  STOCK
+  DELIVERY
+  TIMING
+  COMPETITOR
+  CUSTOMER_CANCELLED
+  OTHER
+}
+
+/// The order itself: OPEN until it is CANCELLED or (in a later phase) COMPLETED.
+enum SalesOrderStatus {
+  OPEN
+  CANCELLED
+  COMPLETED
+}
+
+/// Kept separate from the order status on purpose. Whether money has arrived and whether goods
+/// may leave are different questions with different owners, and conflating them into one status
+/// enum is how a cash order ends up released because someone needed a value for "ready".
+enum OrderPaymentStatus {
+  /// Cash terms: payment is owed now and has not arrived.
+  UNPAID
+  /// Credit terms: nothing is owed yet, and the due date is the order's payment terms.
+  NOT_REQUIRED_YET
+  PAID
+}
+
+enum OrderFulfillmentStatus {
+  NOT_READY
+  READY
+  CANCELLED
+}
+
+model SalesOrder {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  orderNumber String @map("order_number")
+  /// The accepted quotation this order embodies. One active order per quotation, enforced by a
+  /// partial unique index in the migration rather than by application code alone.
+  quotationId String @map("quotation_id") @db.Uuid
+  customerId  String @map("customer_id") @db.Uuid
+
+  status             SalesOrderStatus       @default(OPEN)
+  paymentStatus      OrderPaymentStatus     @map("payment_status")
+  fulfillmentStatus  OrderFulfillmentStatus @default(NOT_READY) @map("fulfillment_status")
+
+  currency         String      @db.VarChar(3)
+  paymentType      PaymentType @map("payment_type")
+  paymentTermsDays Int         @default(0) @map("payment_terms_days")
+  /// When credit falls due. Null for cash orders. Derived at creation from the accepted terms.
+  paymentDueDate   DateTime?   @map("payment_due_date") @db.Date
+
+  /// Copied from the quotation, santim for santim. Never recomputed from the catalogue.
+  subtotalMinor      BigInt @map("subtotal_minor")
+  discountTotalMinor BigInt @map("discount_total_minor")
+  deliveryFeeMinor   BigInt @map("delivery_fee_minor")
+  deliveryTaxMinor   BigInt @map("delivery_tax_minor")
+  taxTotalMinor      BigInt @map("tax_total_minor")
+  grandTotalMinor    BigInt @map("grand_total_minor")
+
+  deliveryRequired        Boolean @default(false) @map("delivery_required")
+  /// The address as it stood when the order was raised. Editing the customer record later must
+  /// not silently redirect goods already promised somewhere else.
+  deliveryAddressSnapshot String? @map("delivery_address_snapshot")
+
+  cancelledAt     DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledById   String?   @map("cancelled_by_id") @db.Uuid
+  cancellationReason String? @map("cancellation_reason")
+
+  createdById String?  @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotation    Quotation          @relation(fields: [quotationId], references: [id], onDelete: Restrict)
+  customer     Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  items        SalesOrderItem[]
+  reservations StockReservation[]
+
+  @@unique([organizationId, orderNumber])
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
+  @@map("sales_orders")
+}
+
+/// A line of the agreement, copied from the quotation line it came from.
+model SalesOrderItem {
+  id             String  @id @default(uuid()) @db.Uuid
+  organizationId String  @map("organization_id") @db.Uuid
+  salesOrderId   String  @map("sales_order_id") @db.Uuid
+  productId      String? @map("product_id") @db.Uuid
+
+  skuSnapshot         String @map("sku_snapshot")
+  descriptionSnapshot String @map("description_snapshot")
+  unitSnapshot        String @map("unit_snapshot")
+
+  quantity Int
+
+  listUnitPriceMinor   BigInt @map("list_unit_price_minor")
+  quotedUnitPriceMinor BigInt @map("quoted_unit_price_minor")
+  discountBp           Int    @map("discount_bp")
+  taxRateBp            Int    @map("tax_rate_bp")
+
+  lineSubtotalMinor  BigInt @map("line_subtotal_minor")
+  lineDiscountMinor  BigInt @map("line_discount_minor")
+  taxableAmountMinor BigInt @map("taxable_amount_minor")
+  taxMinor           BigInt @map("tax_minor")
+  lineTotalMinor     BigInt @map("line_total_minor")
+
+  /// How much of this line is currently held against stock. Equals `quantity` while the order
+  /// is open under the all-or-nothing policy, and zero once released.
+  reservedQuantity Int @default(0) @map("reserved_quantity")
+
+  sortOrder Int @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  salesOrder   SalesOrder         @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  product      Product?           @relation(fields: [productId], references: [id], onDelete: SetNull)
+  reservations StockReservation[]
+
+  @@index([organizationId])
+  @@index([salesOrderId])
+  @@map("sales_order_items")
+}
+
+enum ReservationStatus {
+  ACTIVE
+  RELEASED
+  /// Reserved for the warehouse phase, when goods actually leave. Nothing reaches it yet.
+  CONSUMED
+}
+
+/// The source of truth for committed stock.
+///
+/// `product.reserved_stock` is a maintained aggregate of the ACTIVE rows here, written in the
+/// same transaction. Keeping the rows means a release can subtract exactly what a specific
+/// order took, rather than decrementing a shared counter by a number somebody computed — which
+/// is how aggregates drift and how "why does this product show 40 reserved with no open orders"
+/// becomes unanswerable.
+model StockReservation {
+  id               String @id @default(uuid()) @db.Uuid
+  organizationId   String @map("organization_id") @db.Uuid
+  salesOrderId     String @map("sales_order_id") @db.Uuid
+  salesOrderItemId String @map("sales_order_item_id") @db.Uuid
+  productId        String @map("product_id") @db.Uuid
+
+  quantity Int
+  status   ReservationStatus @default(ACTIVE)
+
+  releasedAt DateTime? @map("released_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  salesOrder     SalesOrder     @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
+  product        Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId])
+  @@index([salesOrderId])
+  @@index([organizationId, productId, status])
+  @@map("stock_reservations")
 }
