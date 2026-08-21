@@ -63,6 +63,11 @@ describe('the matrix', () => {
       'approve:quotation:self_limit',
       'approve:quotation:manager_limit',
       'mark:quotation-sent',
+      'read:follow-up',
+      'complete:follow-up',
+      'record:quotation-acceptance',
+      'record:quotation-rejection',
+      'create:sales-order',
       'approve:customer-message',
       'set:customer-credit',
       'cancel:order',
@@ -84,6 +89,11 @@ describe('the matrix', () => {
       'submit:quotation',
       'approve:quotation:self_limit',
       'mark:quotation-sent',
+      'read:follow-up',
+      'complete:follow-up',
+      'record:quotation-acceptance',
+      'record:quotation-rejection',
+      'create:sales-order',
       'approve:customer-message',
     ],
     FINANCE: [
@@ -198,6 +208,43 @@ describe('separation of duties', () => {
     expect(PERMISSIONS).toContain('write:inquiry');
     expect(PERMISSIONS).toContain('review:inquiry-match');
     expect(new Set(PERMISSIONS).size).toBe(PERMISSIONS.length);
+  });
+
+  it('separates recording what a customer said from committing stock to it', () => {
+    // Two different acts. Recording an acceptance reports a conversation; creating the order
+    // takes goods out of everyone else's reach. A future clerk role could hold the first alone.
+    expect(PERMISSIONS).toContain('record:quotation-acceptance');
+    expect(PERMISSIONS).toContain('create:sales-order');
+  });
+
+  it('lets a salesperson raise an order but not cancel one', () => {
+    // Cancelling releases reserved stock and unwinds a commitment, which is a manager's call.
+    expect(can('SALESPERSON', 'create:sales-order')).toBe(true);
+    expect(can('SALESPERSON', 'cancel:order')).toBe(false);
+    expect(can('SALES_MANAGER', 'cancel:order')).toBe(true);
+  });
+
+  it('keeps follow-ups and order creation inside sales', () => {
+    for (const permission of [
+      'read:follow-up',
+      'complete:follow-up',
+      'record:quotation-acceptance',
+      'record:quotation-rejection',
+      'create:sales-order',
+    ] as const) {
+      expect(can('FINANCE', permission)).toBe(false);
+      expect(can('WAREHOUSE', permission)).toBe(false);
+      expect(can('SALESPERSON', permission)).toBe(true);
+      expect(can('SALES_MANAGER', permission)).toBe(true);
+    }
+  });
+
+  it('lets finance and warehouse read orders without reserving anything', () => {
+    expect(can('FINANCE', 'read:order')).toBe(true);
+    expect(can('WAREHOUSE', 'read:order')).toBe(true);
+    expect(can('FINANCE', 'create:sales-order')).toBe(false);
+    expect(can('WAREHOUSE', 'create:sales-order')).toBe(false);
+    expect(can('WAREHOUSE', 'cancel:order')).toBe(false);
   });
 
   it('does not let a write permission carry stock authority', () => {

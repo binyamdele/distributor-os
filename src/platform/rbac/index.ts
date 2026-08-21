@@ -82,6 +82,19 @@ export const PERMISSIONS = [
   'approve:quotation:manager_limit',
   /** Record that an approved quotation was sent to the customer. */
   'mark:quotation-sent',
+
+  // --- Phase 4: follow-ups, acceptance and orders ---------------------------
+  'read:follow-up',
+  /** Record the outcome of chasing a quotation. */
+  'complete:follow-up',
+  /**
+   * Record that the customer accepted. Separate from creating the order, because saying what a
+   * customer said and committing the organization's stock are different acts.
+   */
+  'record:quotation-acceptance',
+  'record:quotation-rejection',
+  /** Convert an accepted quotation into a sales order, reserving stock. */
+  'create:sales-order',
   /** Approve AI-drafted customer-facing text before it leaves the building. */
   'approve:customer-message',
   /** Change a customer's credit standing or limit. */
@@ -141,6 +154,11 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'approve:quotation:self_limit',
     'approve:quotation:manager_limit',
     'mark:quotation-sent',
+    'read:follow-up',
+    'complete:follow-up',
+    'record:quotation-acceptance',
+    'record:quotation-rejection',
+    'create:sales-order',
     'approve:customer-message',
     'set:customer-credit',
     'cancel:order',
@@ -163,6 +181,11 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
      */
     'approve:quotation:self_limit',
     'mark:quotation-sent',
+    'read:follow-up',
+    'complete:follow-up',
+    'record:quotation-acceptance',
+    'record:quotation-rejection',
+    'create:sales-order',
     'approve:customer-message',
   ],
 
