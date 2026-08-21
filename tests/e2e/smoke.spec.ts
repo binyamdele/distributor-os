@@ -126,7 +126,22 @@ test.describe('the owner path', () => {
     await page.goto('/activity');
 
     await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();
-    await expect(page.getByText('product.created').first()).toBeVisible();
+
+    /*
+     * Assert the ordering property rather than the presence of one seeded event. The page shows
+     * the most recent 100, so naming `product.created` made the test depend on how much audit
+     * volume every other test happened to generate first — which Phase 2 promptly exceeded.
+     */
+    const sequences = await page
+      .locator('tbody tr td:first-child')
+      .allTextContents();
+
+    expect(sequences.length).toBeGreaterThan(0);
+    const numbers = sequences.map((value) => Number(value.trim()));
+    expect(numbers.every(Number.isFinite)).toBe(true);
+    for (let index = 1; index < numbers.length; index += 1) {
+      expect(numbers[index]!).toBeLessThan(numbers[index - 1]!);
+    }
   });
 
   test('signs out, and the session stops working', async ({ page }) => {

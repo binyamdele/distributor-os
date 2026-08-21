@@ -25,7 +25,11 @@ export default defineWorkspace([
     resolve: { alias: testAlias },
     test: {
       name: 'integration',
-      include: ['tests/integration/**/*.test.ts', 'tests/tenancy/**/*.test.ts'],
+      include: [
+        'tests/integration/**/*.test.ts',
+        'tests/tenancy/**/*.test.ts',
+        'tests/security/**/*.test.ts',
+      ],
       environment: 'node',
       setupFiles: ['tests/support/setup.ts'],
       /*
