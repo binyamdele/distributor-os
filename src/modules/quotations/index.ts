@@ -6,6 +6,7 @@ import { type Result, fail, ok } from '@/platform/result';
 import type { Role } from '@/platform/rbac';
 import { recordAudit } from '@/modules/audit';
 import { allocateDocumentNumber } from '@/modules/numbering';
+import { cancelOpenFollowUps, scheduleFirstFollowUp } from '@/modules/followups';
 import { freeStock } from '@/modules/catalog';
 import {
   type ApprovalLevel,
@@ -40,6 +41,7 @@ const DEFAULT_POLICY = {
   quoteValidityDays: 7,
   defaultPaymentTermsDays: 30,
   deliveryFeeTaxable: true,
+  followUpIntervalDays: 2,
 };
 
 // ---------------------------------------------------------------------------
@@ -110,6 +112,7 @@ interface LoadedQuotation {
     deliveryFeeTaxable: boolean;
     quoteValidityDays: number;
     defaultPaymentTermsDays: number;
+    followUpIntervalDays: number;
   };
   vatRateBp: number;
 }
@@ -180,6 +183,8 @@ async function load(
       quoteValidityDays: settings?.quoteValidityDays ?? DEFAULT_POLICY.quoteValidityDays,
       defaultPaymentTermsDays:
         settings?.defaultPaymentTermsDays ?? DEFAULT_POLICY.defaultPaymentTermsDays,
+      followUpIntervalDays:
+        settings?.followUpIntervalDays ?? DEFAULT_POLICY.followUpIntervalDays,
     },
     vatRateBp: quotation.organization.vatRateBp,
   };
@@ -1120,11 +1125,23 @@ export async function markSent(
     );
   }
 
+  const sentAt = new Date();
   const moved = await transition(tx, quotationId, 'APPROVED', 'SENT', {
-    sentAt: new Date(),
+    sentAt,
     sentById: context.userId,
   });
   if (!moved.ok) return moved;
+
+  // The first chase is scheduled in the same transaction as the send. A quotation cannot be
+  // recorded as sent without appearing in the follow-up queue, which is precisely the failure
+  // the queue exists to prevent.
+  const scheduled = await scheduleFirstFollowUp(tx, context, {
+    quotationId,
+    sentAt,
+    intervalDays: loaded.policy.followUpIntervalDays,
+    assignedUserId: context.userId,
+  });
+  if (!scheduled.ok) return scheduled;
 
   await recordAudit(tx, context, {
     action: 'quotation.marked_sent',
@@ -1166,6 +1183,222 @@ export async function cancelQuotation(
   });
 
   return ok(null);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4 — what the customer said
+// ---------------------------------------------------------------------------
+
+export const ACCEPTANCE_SOURCES = ['PHONE', 'MESSAGE', 'EMAIL', 'IN_PERSON', 'OTHER'] as const;
+export type AcceptanceSource = (typeof ACCEPTANCE_SOURCES)[number];
+
+export const REJECTION_REASONS = [
+  'PRICE',
+  'STOCK',
+  'DELIVERY',
+  'TIMING',
+  'COMPETITOR',
+  'CUSTOMER_CANCELLED',
+  'OTHER',
+] as const;
+export type RejectionReason = (typeof REJECTION_REASONS)[number];
+
+export const acceptanceSchema = z.object({
+  source: z.enum(ACCEPTANCE_SOURCES),
+  note: z.string().trim().max(1000).optional().or(z.literal('')),
+});
+
+export const rejectionSchema = z.object({
+  reason: z.enum(REJECTION_REASONS).optional(),
+  note: z.string().trim().max(1000).optional().or(z.literal('')),
+});
+
+/** Whether a quotation is past its validity date, compared as calendar dates in UTC. */
+export function isExpired(validityDate: Date, now: Date = new Date()): boolean {
+  const validUntil = new Date(
+    Date.UTC(validityDate.getUTCFullYear(), validityDate.getUTCMonth(), validityDate.getUTCDate()),
+  );
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  return today > validUntil;
+}
+
+export interface AcceptanceEligibility {
+  readonly eligible: boolean;
+  readonly reason: string | null;
+}
+
+/**
+ * Whether a quotation may be recorded as accepted.
+ *
+ * A pure function so the rule can be enumerated in a unit test rather than inferred from the
+ * database path. The conditions are the ones that make an acceptance meaningful: the customer
+ * must have been sent something, that something must still be what was approved, and it must
+ * still be on offer.
+ */
+export function acceptanceEligibility(input: {
+  status: QuotationStatus;
+  approvalIsLive: boolean;
+  validityDate: Date;
+  now?: Date;
+}): AcceptanceEligibility {
+  if (input.status !== 'SENT') {
+    return {
+      eligible: false,
+      reason:
+        `Only a quotation that has been sent can be accepted; this one is ${input.status
+          .toLowerCase()
+          .replace(/_/g, ' ')}.`,
+    };
+  }
+
+  if (!input.approvalIsLive) {
+    // Reaching SENT requires a live approval, so this means something changed underneath
+    // afterwards. Recording an acceptance against figures nobody approved would be worse than
+    // refusing, however inconvenient the refusal is.
+    return {
+      eligible: false,
+      reason:
+        'The figures on this quotation no longer match what was approved, so an acceptance cannot be recorded against them.',
+    };
+  }
+
+  if (isExpired(input.validityDate, input.now)) {
+    return {
+      eligible: false,
+      reason:
+        'This quotation has passed its validity date. Prices may have moved, so raise a new quotation rather than accepting this one.',
+    };
+  }
+
+  return { eligible: true, reason: null };
+}
+
+/**
+ * Records that a customer accepted.
+ *
+ * This is staff reporting what they were told. It is not an electronic signature, nothing here
+ * authenticates the customer, and the UI says so — presenting it as more than it is would be the
+ * kind of quiet overclaim that makes an audit trail worthless when it matters.
+ */
+export async function recordAcceptance(
+  tx: TenantTransaction,
+  context: ActorContext,
+  quotationId: string,
+  raw: unknown,
+): Promise<Result<{ acceptedAt: Date; closedFollowUps: number }>> {
+  const parsed = acceptanceSchema.safeParse(raw);
+  if (!parsed.success) {
+    return fail('VALIDATION_FAILED', 'Say how the customer told you they accepted.');
+  }
+
+  if (!(await lockQuotation(tx, context.organizationId, quotationId))) {
+    return fail('NOT_FOUND', 'error.notFound');
+  }
+  const loaded = await load(tx, quotationId);
+  if (!loaded) return fail('NOT_FOUND', 'error.notFound');
+
+  // Re-derived inside the lock, not trusted from an earlier read.
+  const recalculated = await recalculate(tx, loaded);
+  const approvalIsLive =
+    loaded.quotation.approvedPayloadHash !== null &&
+    loaded.quotation.approvedPayloadHash === recalculated.payloadHash;
+
+  const eligibility = acceptanceEligibility({
+    status: loaded.quotation.status,
+    approvalIsLive,
+    validityDate: loaded.quotation.validityDate,
+  });
+  if (!eligibility.eligible) {
+    return fail('INVALID_STATE_TRANSITION', eligibility.reason ?? 'error.generic');
+  }
+
+  const acceptedAt = new Date();
+  const moved = await transition(tx, quotationId, 'SENT', 'ACCEPTED', {
+    acceptedAt,
+    acceptedById: context.userId,
+    acceptanceSource: parsed.data.source,
+    acceptanceNote: parsed.data.note?.trim() || null,
+  });
+  if (!moved.ok) return moved;
+
+  // Nobody should be asked to chase a quotation the customer has already answered.
+  const closedFollowUps = await cancelOpenFollowUps(
+    tx,
+    context,
+    quotationId,
+    'the customer accepted the quotation',
+  );
+
+  await recordAudit(tx, context, {
+    action: 'quotation.accepted',
+    entityType: 'quotation',
+    entityId: quotationId,
+    newState: {
+      source: parsed.data.source,
+      payloadHash: recalculated.payloadHash,
+      grandTotalMinor: recalculated.totals.grandTotalMinor.toString(),
+      closedFollowUps,
+      // Explicit, so nobody reading the log later mistakes this for a signature.
+      basis: 'recorded_by_staff',
+    },
+  });
+
+  return ok({ acceptedAt, closedFollowUps });
+}
+
+export async function recordRejection(
+  tx: TenantTransaction,
+  context: ActorContext,
+  quotationId: string,
+  raw: unknown,
+): Promise<Result<{ rejectedAt: Date; closedFollowUps: number }>> {
+  const parsed = rejectionSchema.safeParse(raw);
+  if (!parsed.success) return fail('VALIDATION_FAILED', 'error.generic');
+
+  if (!(await lockQuotation(tx, context.organizationId, quotationId))) {
+    return fail('NOT_FOUND', 'error.notFound');
+  }
+  const loaded = await load(tx, quotationId);
+  if (!loaded) return fail('NOT_FOUND', 'error.notFound');
+
+  if (loaded.quotation.status !== 'SENT') {
+    return fail(
+      'INVALID_STATE_TRANSITION',
+      `Only a quotation that has been sent can be rejected; this one is ${loaded.quotation.status
+        .toLowerCase()
+        .replace(/_/g, ' ')}.`,
+    );
+  }
+
+  const rejectedAt = new Date();
+  const moved = await transition(tx, quotationId, 'SENT', 'REJECTED', {
+    rejectedAt,
+    rejectedById: context.userId,
+    // Optional on purpose. Forcing a category produces a category, not a reason.
+    rejectionReason: parsed.data.reason ?? null,
+    rejectionNote: parsed.data.note?.trim() || null,
+  });
+  if (!moved.ok) return moved;
+
+  const closedFollowUps = await cancelOpenFollowUps(
+    tx,
+    context,
+    quotationId,
+    'the customer rejected the quotation',
+  );
+
+  await recordAudit(tx, context, {
+    action: 'quotation.rejected',
+    entityType: 'quotation',
+    entityId: quotationId,
+    newState: {
+      reason: parsed.data.reason ?? null,
+      closedFollowUps,
+      basis: 'recorded_by_staff',
+    },
+  });
+
+  return ok({ rejectedAt, closedFollowUps });
 }
 
 // ---------------------------------------------------------------------------
