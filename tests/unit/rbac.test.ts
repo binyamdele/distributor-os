@@ -54,13 +54,15 @@ describe('the matrix', () => {
       'read:settings',
       'write:customer',
       'write:inquiry',
-      'write:quotation',
       'parse:inquiry',
       'review:inquiry-match',
       'mark:inquiry-ready',
-      'approve:quotation',
-      'approve:quotation-override',
-      'send:quotation',
+      'create:quotation',
+      'edit:quotation',
+      'submit:quotation',
+      'approve:quotation:self_limit',
+      'approve:quotation:manager_limit',
+      'mark:quotation-sent',
       'approve:customer-message',
       'set:customer-credit',
       'cancel:order',
@@ -74,17 +76,20 @@ describe('the matrix', () => {
       'read:order',
       'write:customer',
       'write:inquiry',
-      'write:quotation',
       'parse:inquiry',
       'review:inquiry-match',
       'mark:inquiry-ready',
-      'approve:quotation',
-      'send:quotation',
+      'create:quotation',
+      'edit:quotation',
+      'submit:quotation',
+      'approve:quotation:self_limit',
+      'mark:quotation-sent',
       'approve:customer-message',
     ],
     FINANCE: [
       'read:dashboard',
       'read:customer',
+      'read:quotation',
       'read:order',
       'read:payment',
       'read:receivables',
@@ -132,9 +137,36 @@ describe('separation of duties', () => {
   });
 
   it('does not let a salesperson approve beyond their own limit', () => {
-    expect(can('SALESPERSON', 'approve:quotation')).toBe(true);
-    expect(can('SALESPERSON', 'approve:quotation-override')).toBe(false);
-    expect(can('SALES_MANAGER', 'approve:quotation-override')).toBe(true);
+    expect(can('SALESPERSON', 'approve:quotation:self_limit')).toBe(true);
+    expect(can('SALESPERSON', 'approve:quotation:manager_limit')).toBe(false);
+    expect(can('SALES_MANAGER', 'approve:quotation:manager_limit')).toBe(true);
+  });
+
+  it('lets finance read quotations without touching a price', () => {
+    expect(can('FINANCE', 'read:quotation')).toBe(true);
+    expect(can('FINANCE', 'create:quotation')).toBe(false);
+    expect(can('FINANCE', 'edit:quotation')).toBe(false);
+    expect(can('FINANCE', 'approve:quotation:self_limit')).toBe(false);
+    expect(can('FINANCE', 'mark:quotation-sent')).toBe(false);
+  });
+
+  it('keeps warehouse out of quotations entirely', () => {
+    for (const permission of [
+      'read:quotation',
+      'create:quotation',
+      'edit:quotation',
+      'approve:quotation:self_limit',
+    ] as const) {
+      expect(can('WAREHOUSE', permission)).toBe(false);
+    }
+  });
+
+  it('separates drafting a quotation from approving and from sending it', () => {
+    // Three distinct acts. A role can hold any one without the others, which is what makes the
+    // approval gate a gate rather than a formality.
+    expect(PERMISSIONS).toContain('create:quotation');
+    expect(PERMISSIONS).toContain('approve:quotation:self_limit');
+    expect(PERMISSIONS).toContain('mark:quotation-sent');
   });
 
   it('does not let warehouse staff touch prices or customers', () => {
@@ -144,8 +176,8 @@ describe('separation of duties', () => {
   });
 
   it('does not let finance write quotations', () => {
-    expect(can('FINANCE', 'write:quotation')).toBe(false);
-    expect(can('FINANCE', 'approve:quotation')).toBe(false);
+    expect(can('FINANCE', 'edit:quotation')).toBe(false);
+    expect(can('FINANCE', 'approve:quotation:self_limit')).toBe(false);
   });
 
   it('keeps inquiry interpretation inside sales', () => {

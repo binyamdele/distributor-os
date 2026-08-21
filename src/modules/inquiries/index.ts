@@ -387,7 +387,7 @@ export interface InquiryView {
   readonly destinationText: string | null;
   readonly parsedCustomerName: string | null;
   readonly parseError: string | null;
-  readonly customer: { id: string; companyName: string } | null;
+  readonly customer: { id: string; companyName: string; creditStatus: string } | null;
   readonly createdAt: Date;
   readonly parsedAt: Date | null;
   readonly readyAt: Date | null;
@@ -404,7 +404,7 @@ export async function getInquiry(
   const inquiry = await tx.inquiry.findFirst({
     where: { id },
     include: {
-      customer: { select: { id: true, companyName: true } },
+      customer: { select: { id: true, companyName: true, creditStatus: true } },
       items: {
         orderBy: { position: 'asc' },
         include: {

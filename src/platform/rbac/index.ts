@@ -8,8 +8,8 @@
  *      permission model rots — the day a distributor wants a second manager tier, every one of
  *      those checks is a place to get it wrong.
  *
- *   2. **A permission grants what its name says and nothing adjacent.** `write:quotation` does
- *      not approve one, and `approve:quotation` does not send it. Payment confirmation is its
+ *   2. **A permission grants what its name says and nothing adjacent.** `edit:quotation` does
+ *      not approve one, and approving does not send it. Payment confirmation is its
  *      own permission held only by Finance, because "can edit an order" must never quietly
  *      carry "can declare the money arrived".
  *
@@ -45,7 +45,6 @@ export const PERMISSIONS = [
   'write:customer',
   'write:product',
   'write:inquiry',
-  'write:quotation',
   'adjust:stock',
 
   // --- Phase 2: inquiry interpretation --------------------------------------
@@ -64,12 +63,25 @@ export const PERMISSIONS = [
   'mark:inquiry-ready',
 
   // --- Authority, deliberately separate from the write permissions ----------
-  /** Approve a quotation within one's own discount limit. Not implied by write:quotation. */
-  'approve:quotation',
-  /** Approve beyond a salesperson's limit, or below the price floor. */
-  'approve:quotation-override',
-  /** Mark a quotation as sent to the customer. */
-  'send:quotation',
+  // --- Phase 3: quotations --------------------------------------------------
+  /** Draft a quotation from a reviewed inquiry. */
+  'create:quotation',
+  /** Change the commercial figures on a draft. Separate from creating one. */
+  'edit:quotation',
+  /** Put a draft in front of an approver. */
+  'submit:quotation',
+  /**
+   * Approve a quotation whose discounts fall within a salesperson's own limit.
+   *
+   * Holding this is necessary but never sufficient: the rules engine decides which level a
+   * given quotation requires, and a salesperson holding only this permission cannot approve one
+   * that needs a manager. The permission grants the act; the rules grant the case.
+   */
+  'approve:quotation:self_limit',
+  /** Approve a quotation whose discounts exceed the salesperson limit. */
+  'approve:quotation:manager_limit',
+  /** Record that an approved quotation was sent to the customer. */
+  'mark:quotation-sent',
   /** Approve AI-drafted customer-facing text before it leaves the building. */
   'approve:customer-message',
   /** Change a customer's credit standing or limit. */
@@ -120,13 +132,15 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'read:settings',
     'write:customer',
     'write:inquiry',
-    'write:quotation',
     'parse:inquiry',
     'review:inquiry-match',
     'mark:inquiry-ready',
-    'approve:quotation',
-    'approve:quotation-override',
-    'send:quotation',
+    'create:quotation',
+    'edit:quotation',
+    'submit:quotation',
+    'approve:quotation:self_limit',
+    'approve:quotation:manager_limit',
+    'mark:quotation-sent',
     'approve:customer-message',
     'set:customer-credit',
     'cancel:order',
@@ -136,24 +150,30 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     ...SALES_READS,
     'write:customer',
     'write:inquiry',
-    'write:quotation',
     'parse:inquiry',
     'review:inquiry-match',
     'mark:inquiry-ready',
+    'create:quotation',
+    'edit:quotation',
+    'submit:quotation',
     /**
-     * Present, but not sufficient on its own: the approval engine still refuses a discount
-     * beyond the salesperson limit, at which point 'approve:quotation-override' is required
-     * and a salesperson does not hold it. The permission grants the act, the rules engine
-     * grants the case.
+     * Present, but not sufficient on its own: the rules engine still refuses a discount beyond
+     * the salesperson limit, at which point 'approve:quotation:manager_limit' is required and a
+     * salesperson does not hold it.
      */
-    'approve:quotation',
-    'send:quotation',
+    'approve:quotation:self_limit',
+    'mark:quotation-sent',
     'approve:customer-message',
   ],
 
   FINANCE: [
     'read:dashboard',
     'read:customer',
+    /**
+     * Read only. Finance chases what was quoted and what is owed; they do not set prices, and
+     * granting a write here "so the numbers can be fixed" is how a separation of duties dies.
+     */
+    'read:quotation',
     'read:order',
     'read:payment',
     'read:receivables',
