@@ -7,11 +7,12 @@ The narrow promise:
 > Turn customer inquiries into quotations, orders, follow-ups, payments and delivery handoffs
 > with dramatically less manual work.
 
-**Status: Phase 4 of 8 — follow-ups, orders and stock reservations.** Everything through
-quotations, plus: a sent quotation enters a deterministic follow-up queue, staff record what the
-customer said, and an accepted quotation becomes a sales order carrying its snapshots exactly,
-with stock reserved atomically or not at all. Payments, warehouse and delivery handoff are **not
-built yet**. See [what exists](#what-exists) for the honest split.
+**Status: Phase 5 of 8 — cash payment review and receivables.** Everything through sales orders,
+plus: sales records what a customer says they paid, Finance reviews the evidence beside the
+order's own figures, and only a confirmation moves an order to paid and releases a cash
+order to the warehouse. Credit orders become receivables when they fall due. Warehouse
+preparation and delivery handoff are **not built yet**, and there is no real OCR or payment
+integration. See [what exists](#what-exists) for the honest split.
 
 ---
 
@@ -99,18 +100,18 @@ see its customers or its gravel while signed in to Addis Build Supply, something
 
 | Built and tested | Not built yet |
 |---|---|
-| Organizations, settings, number sequences | Payment review and finance confirmation |
-| Users, memberships, sessions, login | Warehouse preparation and delivery handoff |
-| Role-based access control (5 roles, 44 permissions) | Dashboard metrics and the daily brief |
+| Organizations, settings, number sequences | Warehouse preparation and delivery handoff |
+| Users, memberships, sessions, login | Real OCR and real payment-provider integration |
+| Role-based access control (5 roles, 42 permissions) | Dashboard metrics and the daily brief |
 | Customers, with credit standing and terms | Real WhatsApp / Telegram / SMS delivery |
 | Products, aliases, stock adjustment with reasons | A production AI provider actually exercised |
 | Inquiry capture, with channel seams | Stock consumption on dispatch |
 | AI parsing behind a provider seam, schema-validated | PDF and customer-facing quote links |
 | Deterministic product matching with explainable confidence | Backorders, partial fulfilment, substitution |
 | Salesperson review, correction and the ready-for-quote gate | Quote revision and supersede flows |
-| Quotations with snapshotted prices and deterministic VAT | |
-| A rules-driven approval ladder, bound to a payload hash | |
-| A deterministic follow-up queue, with a cap and no autosend | |
+| Quotations with snapshotted prices and deterministic VAT | Refunds, credit notes and reversals |
+| A rules-driven approval ladder, bound to a payload hash | Bank-feed reconciliation and statements |
+| A deterministic follow-up queue, with a cap and no autosend | Allocating an overpayment to another order |
 | Recorded customer acceptance and rejection | |
 | Sales orders built from quotation snapshots | |
 | Transactional stock reservation, all-or-nothing | |
@@ -118,6 +119,10 @@ see its customers or its gravel while signed in to Addis Build Supply, something
 | Append-only audit log with per-tenant ordering | |
 | Three-layer tenant isolation | |
 | Money arithmetic in integer minor units | |
+| Payment evidence upload, validated from its bytes | |
+| A finance review gate: submit and confirm are different roles | |
+| Confirmation bound to a payload fingerprint | |
+| Query-derived receivables with deterministic priorities | |
 
 Nothing in this checkout has ever contacted an external system. The AI provider defaults to a
 deterministic mock; the Anthropic adapter exists so the seam is real, and has never been called.
@@ -191,6 +196,7 @@ Other documents:
 - [`docs/phase-2-inquiry-parsing.md`](docs/phase-2-inquiry-parsing.md) — the AI trust boundary, the matching algorithm, confidence rules, the state machine and known limitations
 - [`docs/phase-3-quotations.md`](docs/phase-3-quotations.md) — snapshot semantics, the exact money formula, approval rules, the payload fingerprint and concurrency behaviour
 - [`docs/phase-4-orders-and-reservations.md`](docs/phase-4-orders-and-reservations.md) — follow-up rules, acceptance invariants, the order state model, the reservation source of truth and lock ordering
+- [`docs/phase-5-payments-and-receivables.md`](docs/phase-5-payments-and-receivables.md) — the cash review gate, the extraction trust boundary, the confirmation fingerprint, evidence storage and access, and the receivables model
 - [`docs/future-roadmap.md`](docs/future-roadmap.md) — what is deliberately not built, and the seam left for it
 - [`docs/customer-discovery.md`](docs/customer-discovery.md) — interview guide
 - [`docs/validation-scorecard.md`](docs/validation-scorecard.md) — build / pivot / kill criteria

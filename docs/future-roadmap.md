@@ -92,3 +92,20 @@ roadmap is to make deferral cheap, not to schedule the work.
 | Paging the follow-up queue | Capped at 200, which is beyond pilot volume | The queue is one query |
 | Snoozing from the original due date rather than from now | Repeated snoozing drifts the schedule; acceptable until it is used heavily | Snooze is one function |
 | A retry policy for lock contention | Deterministic lock ordering removed the need; a retry would have hidden whether the ordering worked | Lock order is one exported function, `lockOrder` |
+
+---
+
+## 5. Deferred by the Phase 5 assessment
+
+| Deferred | Why now is wrong | Seam left behind |
+|---|---|---|
+| Real OCR on payment receipts | A mock that invents plausible figures makes the pipeline look finished while hiding how much manual correction the real thing needs. The workflow must be correct with extraction unavailable | `PaymentExtractor` takes bytes and returns the fenced schema; swapping the implementation touches `src/platform/payments/index.ts` and nothing else |
+| Real payment-provider integration (Telebirr, bank APIs) | Confirmation stays a human action regardless of which integration arrives, so the gate is the valuable half and it is built. An integration would only pre-fill the claim | `PaymentMethod` and `provider_name` already carry the provider; a feed would create `SUBMITTED` rows through the same path staff use |
+| Refunds, credit notes and reversals | A confirmed payment is immutable by trigger, deliberately. Correction is a second recorded fact, and designing that needs the accounting model a pilot has not yet demanded | The immutability trigger and terminal states make a reversal the only possible shape |
+| Allocating an overpayment to another order | Requires a customer credit balance, which is an accounting concept the MVP does not have | Overpayment is audited with disposition `unallocated`, never absorbed |
+| Bank-feed reconciliation | Depends on an integration that does not exist, and on references being reliable, which they are not yet | The partial unique index on confirmed references is the deduplication a feed would need |
+| Dunning messages and statements | Nothing in this product sends anything to a customer yet, and receivables must be trustworthy before they are mailed out | `receivables()` returns the rows a statement would render, with contact details |
+| Scheduled ageing or an overdue sweep | The MVP deliberately lacks a scheduler; buckets are derived per request | `bucketFor` is a pure function of a due date and a clock |
+| Paging the payment queue and receivables | Capped at 200 and 500, beyond pilot volume | Both are one query |
+| S3-compatible evidence storage | Local disk is right for a pilot, and the interface is what matters | `FileStore` has four methods and no URL method; `fileStore()` is the only place a backend is named |
+| Partial confirmation (accepting less than the claim) | Finance confirms what is on the slip; accepting a different figure is a data-entry correction followed by a confirmation, which already works | `amount_confirmed_minor` is separate from `amount_claimed_minor` and both are in the fingerprint |
