@@ -65,7 +65,22 @@ export const DEMO_CATALOGUE: {
   },
 ];
 
+/**
+ * Plants the demo catalogue in an organization, at most once.
+ *
+ * Idempotent on purpose. A helper that walks the whole quotation workflow may legitimately be
+ * called several times for one organization, and a blind re-seed then fails on the
+ * (organization, sku) unique index — surfacing as a duplicate-SKU error in a test that is about
+ * something else entirely. Skipping an existing catalogue removes that footgun without touching
+ * the production constraint, which should stay strict.
+ *
+ * It deliberately does *not* update an existing product. Tests routinely adjust stock or price
+ * mid-run, and a re-seed that reset those values would undo the setup they had just done.
+ */
 export async function seedCatalogue(organizationId: string): Promise<void> {
+  const existing = await owner.product.count({ where: { organizationId } });
+  if (existing > 0) return;
+
   // Several listed spellings normalise to the same alias — "8 mm" and "8mm" are one entry once
   // normalised — and the unique index is per organization. The real seed upserts; here the
   // duplicates are skipped, which keeps the resulting corpus identical either way.
