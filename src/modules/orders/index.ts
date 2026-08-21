@@ -398,6 +398,37 @@ export async function cancelOrder(
     );
   }
 
+  /*
+   * Fulfilment progress blocks cancellation too, from Phase 6.
+   *
+   * Counted directly rather than through the fulfilment module, so orders keeps no dependency
+   * on it — fulfilment already depends on orders, and the pair would otherwise reference each
+   * other. The rule itself lives in `assessCancellation` and is unit-tested there; this is the
+   * same rule expressed as the one query it needs.
+   *
+   * PENDING does not block: nothing physical has happened, and the reservations are released
+   * with the order as they always were. IN_PROGRESS and PREPARED block because someone is
+   * walking the yard against this order. COMPLETED blocks permanently, because the goods have
+   * gone and no row change brings them back.
+   */
+  const blockingTask = await tx.warehouseTask.findFirst({
+    where: {
+      salesOrderId: orderId,
+      status: { in: ['IN_PROGRESS', 'PREPARED', 'COMPLETED'] },
+    },
+    select: { taskNumber: true, status: true },
+  });
+  if (blockingTask) {
+    return fail(
+      'CONFLICT',
+      blockingTask.status === 'COMPLETED'
+        ? `The goods for ${order.orderNumber} have already left the warehouse, so it cannot be cancelled. Record a return against the stock instead.`
+        : `The warehouse has started preparing ${order.orderNumber} on ${blockingTask.taskNumber}. Cancel that task first, then cancel the order.`,
+      { warehouseTask: blockingTask.taskNumber, warehouseTaskStatus: blockingTask.status },
+      true,
+    );
+  }
+
   const active = await tx.stockReservation.findMany({
     where: { salesOrderId: orderId, status: 'ACTIVE' },
   });
@@ -512,6 +543,9 @@ export interface OrderView {
   readonly deliveryRequired: boolean;
   readonly deliveryAddressSnapshot: string | null;
   readonly cancellationReason: string | null;
+  /// Phase 6. Operational completion, which says nothing about money.
+  readonly completedAt: Date | null;
+  readonly pickedUpAt: Date | null;
   readonly createdAt: Date;
   readonly reservations: readonly {
     id: string;
@@ -576,6 +610,8 @@ export async function getOrder(
     deliveryRequired: order.deliveryRequired,
     deliveryAddressSnapshot: order.deliveryAddressSnapshot,
     cancellationReason: order.cancellationReason,
+    completedAt: order.completedAt,
+    pickedUpAt: order.pickedUpAt,
     createdAt: order.createdAt,
     reservations: order.reservations.map((reservation) => ({
       id: reservation.id,

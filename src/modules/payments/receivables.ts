@@ -92,8 +92,18 @@ export async function receivables(
 ): Promise<ReceivableRow[]> {
   const now = options.now ?? new Date();
 
+  /*
+   * Open *and completed* orders, from Phase 6.
+   *
+   * `status: 'OPEN'` alone was correct while the only way out of OPEN was cancellation. Phase 6
+   * added a second exit — operational completion — and a delivered credit order is precisely the
+   * debt a collections list exists to chase. Filtering it out because the goods arrived would
+   * erase a receivable by delivering it, which is the most expensive thing this list could do.
+   *
+   * CANCELLED is still excluded: nothing is owed on an order that never happened.
+   */
   const orders = await tx.salesOrder.findMany({
-    where: { status: 'OPEN' },
+    where: { status: { in: ['OPEN', 'COMPLETED'] } },
     include: {
       customer: { select: { id: true, companyName: true, phone: true } },
       payments: { where: { status: 'CONFIRMED' }, select: { amountConfirmedMinor: true } },
