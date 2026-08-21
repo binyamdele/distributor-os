@@ -7,12 +7,13 @@ The narrow promise:
 > Turn customer inquiries into quotations, orders, follow-ups, payments and delivery handoffs
 > with dramatically less manual work.
 
-**Status: Phase 5 of 8 — cash payment review and receivables.** Everything through sales orders,
-plus: sales records what a customer says they paid, Finance reviews the evidence beside the
-order's own figures, and only a confirmation moves an order to paid and releases a cash
-order to the warehouse. Credit orders become receivables when they fall due. Warehouse
-preparation and delivery handoff are **not built yet**, and there is no real OCR or payment
-integration. See [what exists](#what-exists) for the honest split.
+**Status: Phase 6 of 8 — warehouse fulfilment and delivery.** Everything through the payment
+gate, plus: an order that has cleared that gate can be sent to the warehouse, picked, and handed
+over — and the handover is the only operation in the product that removes physical stock. Goods
+then go out on a delivery or are collected, and the order is completed operationally without
+that implying anything about whether it has been paid. There is no returns or refunds workflow,
+no route planning and no customer messaging. See [what exists](#what-exists) for the honest
+split.
 
 ---
 
@@ -102,13 +103,18 @@ see its customers or its gravel while signed in to Addis Build Supply, something
 |---|---|
 | Organizations, settings, number sequences | Warehouse preparation and delivery handoff |
 | Users, memberships, sessions, login | Real OCR and real payment-provider integration |
-| Role-based access control (5 roles, 42 permissions) | Dashboard metrics and the daily brief |
+| Role-based access control (5 roles, 50 permissions) | Dashboard metrics and the daily brief |
 | Customers, with credit standing and terms | Real WhatsApp / Telegram / SMS delivery |
 | Products, aliases, stock adjustment with reasons | A production AI provider actually exercised |
 | Inquiry capture, with channel seams | Stock consumption on dispatch |
 | AI parsing behind a provider seam, schema-validated | PDF and customer-facing quote links |
 | Deterministic product matching with explainable confidence | Backorders, partial fulfilment, substitution |
 | Salesperson review, correction and the ready-for-quote gate | Quote revision and supersede flows |
+| Warehouse tasks driven from the order snapshot | Partial fulfilment, split shipment, backorders |
+| Transactional stock consumption, exactly once | Returns, restocking and refunds |
+| Delivery handoff with snapshotted destination | Route planning, maps, ETAs, driver accounts |
+| A collection path that creates no delivery | Proof-of-delivery signature or photograph |
+| Operational completion kept separate from payment | Customer notifications of any kind |
 | Quotations with snapshotted prices and deterministic VAT | Refunds, credit notes and reversals |
 | A rules-driven approval ladder, bound to a payload hash | Bank-feed reconciliation and statements |
 | A deterministic follow-up queue, with a cap and no autosend | Allocating an overpayment to another order |
@@ -197,6 +203,7 @@ Other documents:
 - [`docs/phase-3-quotations.md`](docs/phase-3-quotations.md) — snapshot semantics, the exact money formula, approval rules, the payload fingerprint and concurrency behaviour
 - [`docs/phase-4-orders-and-reservations.md`](docs/phase-4-orders-and-reservations.md) — follow-up rules, acceptance invariants, the order state model, the reservation source of truth and lock ordering
 - [`docs/phase-5-payments-and-receivables.md`](docs/phase-5-payments-and-receivables.md) — the cash review gate, the extraction trust boundary, the confirmation fingerprint, evidence storage and access, and the receivables model
+- [`docs/phase-6-fulfillment-and-delivery.md`](docs/phase-6-fulfillment-and-delivery.md) — the warehouse task state machine, the exact stock consumption boundary, the delivery state machine, order completion, and why completion says nothing about money
 - [`docs/future-roadmap.md`](docs/future-roadmap.md) — what is deliberately not built, and the seam left for it
 - [`docs/customer-discovery.md`](docs/customer-discovery.md) — interview guide
 - [`docs/validation-scorecard.md`](docs/validation-scorecard.md) — build / pivot / kill criteria

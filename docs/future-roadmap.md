@@ -109,3 +109,25 @@ roadmap is to make deferral cheap, not to schedule the work.
 | Paging the payment queue and receivables | Capped at 200 and 500, beyond pilot volume | Both are one query |
 | S3-compatible evidence storage | Local disk is right for a pilot, and the interface is what matters | `FileStore` has four methods and no URL method; `fileStore()` is the only place a backend is named |
 | Partial confirmation (accepting less than the claim) | Finance confirms what is on the slip; accepting a different figure is a data-entry correction followed by a confirmation, which already works | `amount_confirmed_minor` is separate from `amount_claimed_minor` and both are in the fingerprint |
+
+---
+
+## 6. Deferred by the Phase 6 assessment
+
+| Deferred | Why now is wrong | Seam left behind |
+|---|---|---|
+| Partial fulfilment and split shipment | A half-shipped order is a commercial exception needing a conversation, not a checkbox. An API that accepts "8 of 12" is one that will eventually be used to ship 8 of 12 | `planConsumption` already computes the exact per-product gap a partial flow would need, and the refusal names it |
+| Backorders and substitution on a short pick | Same reason Phase 4 deferred them at reservation: they need an equivalence model and a customer conversation | The blocked completion names the product and both quantities |
+| Returns and failed-delivery restocking | Goods that left the yard are somewhere the software does not know about. Putting quantity back would invent inventory nobody has counted | `adjustStock` exists and is deliberately unconnected to fulfilment; a return is a counted event with its own audit meaning |
+| Refunds and payment reversal | A confirmed payment is immutable by trigger. Correction is a second recorded fact, and its accounting model has not been asked for | Phase 5's terminal payment states make a reversal the only possible shape |
+| Proof of delivery (signature or photograph) | Without one, the product must not call staff confirmation "verified" — and it does not. Adding capture means image storage, consent and retention decisions | Evidence storage from Phase 5 already handles authenticated tenant-scoped files |
+| Driver accounts and a driver mobile app | A pilot distributor has three drivers and knows their names. Accounts mean invitations, credentials and a second UI to maintain | `assigned_driver_name` / `_phone` are plain fields; a driver id can sit beside them |
+| Vehicle fleet database | Same reasoning. A plate number is what the operation actually uses | `vehicle_reference` is free text |
+| Route optimisation, maps, geocoding, ETAs | All depend on a structured address the product does not have, and none of them makes an undelivered order arrive | `destination_text_snapshot` is plain text on purpose; coordinates can be added beside it |
+| Live GPS tracking | Needs a driver device and a driver app, and answers a question ("where is the lorry") that a phone call already answers at this scale | Dispatch and delivery timestamps already bound the window |
+| Customer notifications on fulfilment events | Nothing in this product sends anything yet, and the statuses must be trustworthy before they are broadcast | The status transitions are the events a notifier would subscribe to |
+| Barcode scanning, bin locations, warehouse zones, picking optimisation | A yard with six SKUs does not have a picking problem. These solve congestion the pilot does not have | Task items carry the SKU snapshot; a location column is additive |
+| Reassigning a warehouse task between pickers | Assignment is whoever started it; reassignment needs a UI and a policy | `assigned_user_id` is on the row and nullable |
+| Paging the warehouse and delivery queues | Capped at 200, beyond pilot volume | Both are one query |
+| Requiring assignment before dispatch | Would be a field to fill in rather than a control, at this scale | `assignedAt` distinguishes an assigned delivery from an unassigned one |
+| Procurement, supplier management, accounting ledger | Whole products, none of which the narrow promise covers | Stock adjustments and consumed reservations are the raw material a ledger would read |
