@@ -10,9 +10,12 @@ coverage/
 .env.local
 .env.*.local
 
-# Local file storage for uploaded payment proofs (contains customer data)
-storage/
-!storage/.gitkeep
+# Local file storage for uploaded payment proofs (contains customer data).
+# Anchored to the repository root: an unanchored `storage/` matches any directory of that
+# name at any depth, and would silently exclude src/platform/storage — the module that
+# writes these files — from every commit.
+/storage/
+!/storage/.gitkeep
 
 # Test artefacts
 test-results/
