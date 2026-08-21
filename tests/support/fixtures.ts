@@ -18,6 +18,8 @@ export const owner = new PrismaClient({ datasources: { db: { url: ownerUrl } } }
 
 /** Tables emptied between test files, children before parents. */
 const TABLES = [
+  'payments',
+  'payment_evidence_files',
   'stock_reservations',
   'sales_order_items',
   'sales_orders',

@@ -12,6 +12,7 @@
  * The seed connects as the owner (DIRECT_URL) rather than the application role, because RLS
  * would otherwise — correctly — refuse writes made outside a tenant-scoped transaction.
  */
+import path from 'node:path';
 import { config as loadEnv } from 'dotenv';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { hashPassword } from '../src/platform/security/passwords';
@@ -19,6 +20,7 @@ import { normalizeAlias } from '../src/modules/catalog/normalize';
 // Imported from the concrete module rather than the barrel: the barrel pulls in `config`,
 // which is server-only and would refuse to load in a CLI script.
 import { MOCK_MALFORMED_SENTINEL } from '../src/platform/ai/mock-provider';
+import { SCENARIO_NOTES, seedPaymentScenarios } from './seed-payments';
 
 loadEnv();
 
@@ -507,6 +509,20 @@ async function main(): Promise<void> {
     passwordHash,
   );
 
+  // --- Phase 5 scenarios, on top of the Addis organization ------------------
+  const [salesperson, finance, manager] = await Promise.all([
+    prisma.user.findUniqueOrThrow({ where: { email: 'sales@addisbuild.example' } }),
+    prisma.user.findUniqueOrThrow({ where: { email: 'finance@addisbuild.example' } }),
+    prisma.user.findUniqueOrThrow({ where: { email: 'manager@addisbuild.example' } }),
+  ]);
+
+  const scenarioCount = await seedPaymentScenarios(prisma, ADDIS, {
+    salespersonId: salesperson.id,
+    financeId: finance.id,
+    managerId: manager.id,
+    storageDir: path.resolve(process.cwd(), process.env.FILE_STORAGE_DIR ?? './storage'),
+  });
+
   console.log('Seeded 2 organizations.');
   console.log(`  Addis Build Supply PLC — ${ADDIS_USERS.length} users, ${ADDIS_CUSTOMERS.length} customers, ${ADDIS_PRODUCTS.length} products`);
   console.log(`  Rift Valley Trading PLC — tenancy canary, ${RIFT_PRODUCTS.length} product`);
@@ -517,6 +533,10 @@ async function main(): Promise<void> {
   console.log(`Phase 2 scenarios — ${ADDIS_INQUIRIES.length} inquiries, unparsed.`);
   console.log('Open one and press "Run parse" to see it interpreted:');
   for (const inquiry of ADDIS_INQUIRIES) console.log(`  ${inquiry.note}`);
+  console.log('');
+  console.log(`Phase 5 scenarios — ${scenarioCount} orders with synthetic payment evidence.`);
+  console.log('Sign in as finance@addisbuild.example and open "Payments":');
+  for (const note of SCENARIO_NOTES) console.log(`  ${note}`);
 }
 
 main()
