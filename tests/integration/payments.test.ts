@@ -1179,6 +1179,24 @@ describe('receivables', () => {
     expect(rows.map((row) => row.customerName)).toEqual(['Old Debtor PLC', 'Recent Debtor PLC']);
   });
 
+  it('still lists an operationally completed order that has not been paid', async () => {
+    // Phase 6 gave an order a second way out of OPEN. A delivered 30-day-credit order is
+    // finished operationally and owes every santim; dropping it from this list because the
+    // goods arrived would erase the debt by delivering it.
+    const order = await openOrder(org.organizationId, org.context, { paymentType: 'CREDIT' });
+    await backdateDueDate(order.orderId, 8);
+    await owner.salesOrder.update({
+      where: { id: order.orderId },
+      data: { status: 'COMPLETED', completedAt: new Date() },
+    });
+
+    const rows = await withTenant(org.organizationId, (tx) => receivables(tx));
+    const mine = rows.find((row) => row.orderId === order.orderId);
+    expect(mine).toBeDefined();
+    expect(mine!.outstandingMinor).toBe(order.grandTotalMinor);
+    expect(mine!.bucket).toBe('OVERDUE');
+  });
+
   it('never lists a cancelled order as owing money', async () => {
     const order = await openOrder(org.organizationId, org.context, { paymentType: 'CREDIT' });
     await backdateDueDate(order.orderId, 20);

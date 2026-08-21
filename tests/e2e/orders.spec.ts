@@ -177,7 +177,9 @@ test.describe('a credit order', () => {
     await expect(page).toHaveURL(/\/orders\/[0-9a-f-]{36}/);
     await expect(page.getByText('Not due yet')).toBeVisible();
     await expect(page.getByText('Ready to prepare')).toBeVisible();
-    await expect(page.getByText(/Warehouse preparation is not part of this phase/)).toBeVisible();
+    // Phase 6 built the warehouse workflow, so this order now points at it rather than at a
+    // phase boundary.
+    await expect(page.getByText(/warehouse task can be raised/)).toBeVisible();
   });
 });
 

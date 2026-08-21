@@ -21,6 +21,11 @@ import { normalizeAlias } from '../src/modules/catalog/normalize';
 // which is server-only and would refuse to load in a CLI script.
 import { MOCK_MALFORMED_SENTINEL } from '../src/platform/ai/mock-provider';
 import { SCENARIO_NOTES, seedPaymentScenarios } from './seed-payments';
+import {
+  FULFILLMENT_SCENARIO_NOTES,
+  releaseFulfillmentScenarios,
+  seedFulfillmentScenarios,
+} from './seed-fulfillment';
 
 loadEnv();
 
@@ -516,11 +521,23 @@ async function main(): Promise<void> {
     prisma.user.findUniqueOrThrow({ where: { email: 'manager@addisbuild.example' } }),
   ]);
 
+  // Before Phase 5 rebuilds its orders: put back anything the last run walked out of the yard.
+  // A CONSUMED reservation refuses to be deleted, so the Phase 5 cleanup would fail otherwise.
+  await releaseFulfillmentScenarios(prisma, ADDIS);
+
   const scenarioCount = await seedPaymentScenarios(prisma, ADDIS, {
     salespersonId: salesperson.id,
     financeId: finance.id,
     managerId: manager.id,
     storageDir: path.resolve(process.cwd(), process.env.FILE_STORAGE_DIR ?? './storage'),
+  });
+
+  const warehouseUser = await prisma.user.findUniqueOrThrow({
+    where: { email: 'warehouse@addisbuild.example' },
+  });
+  const fulfillmentCount = await seedFulfillmentScenarios(prisma, ADDIS, {
+    warehouseUserId: warehouseUser.id,
+    managerUserId: manager.id,
   });
 
   console.log('Seeded 2 organizations.');
@@ -537,6 +554,10 @@ async function main(): Promise<void> {
   console.log(`Phase 5 scenarios — ${scenarioCount} orders with synthetic payment evidence.`);
   console.log('Sign in as finance@addisbuild.example and open "Payments":');
   for (const note of SCENARIO_NOTES) console.log(`  ${note}`);
+  console.log('');
+  console.log(`Phase 6 scenarios — ${fulfillmentCount} orders through the warehouse and delivery.`);
+  console.log('Sign in as warehouse@addisbuild.example and open "Warehouse":');
+  for (const note of FULFILLMENT_SCENARIO_NOTES) console.log(`  ${note}`);
 }
 
 main()
