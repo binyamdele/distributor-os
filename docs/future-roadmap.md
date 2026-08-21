@@ -35,6 +35,11 @@ blockchain · unnecessary AI agents.
 | Self-serve signup, billing, subscription management | Pilot organisations are created by hand | Organizations are first-class from day one |
 | Price lists per customer segment, contract pricing, volume breaks | Needs evidence that distributors actually price this way | Prices snapshot onto quotation lines, so a pricing source can change without rewriting history |
 | Learned aliases from salesperson corrections | Worth doing, but only once there are corrections to learn from | `product_aliases.source` already distinguishes `seed | manual | learned` |
+| Embeddings / vector search for product matching | Phase 2 explicitly excludes it, and the deterministic matcher is doing well on the demo corpus. Revisit only if the correction rate says otherwise | The matcher is a pure function over a corpus; a different scorer swaps in behind the same signature |
+| SQL-side candidate pre-filtering via the trigram index | The whole catalogue is loaded per parse. Fine at a few hundred SKUs, wrong at tens of thousands | `product_aliases_normalized_trgm` GIN index already exists; `loadMatchCorpus` is the single place to change |
+| Preserving human review across a re-parse | Carrying a confirmation onto a line that may no longer be the same line is worse than asking again | Proposals are rebuilt wholesale, so a future line-identity scheme has nothing to unpick |
+| Unit conversion (bags ↔ kg, quintal ↔ ton) | Needs a per-product factor nobody has entered; guessing puts a confident wrong number on a quotation | `checkUnit` returns `mismatch` with a reason rather than converting |
+| Amharic alias coverage at scale | A handful are seeded; a real deployment needs many more | Aliases are rows, added without a migration |
 | Purchase orders and supplier-side inventory replenishment | Different workflow, different buyer | Stock adjustments carry a reason code |
 
 ---
