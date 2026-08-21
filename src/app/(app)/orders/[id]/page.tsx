@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { requirePermission } from '@/app/lib/session';
 import { withTenant } from '@/platform/db';
 import { getOrder } from '@/modules/orders';
+import { orderBalance, paymentsForOrder } from '@/modules/payments';
 import { auditTrailFor } from '@/modules/audit';
 import { can } from '@/platform/rbac';
 import { formatMoney } from '@/platform/money';
@@ -17,6 +18,8 @@ import {
   paymentStatusKey,
 } from '../page';
 import { CancelOrderForm } from '../order-forms';
+import { SubmitPaymentForm } from '../../payments/submit-form';
+import { PAYMENT_STATE_TONE, methodKey, paymentStateKey } from '../../payments/page';
 
 /**
  * The sales order screen.
@@ -32,14 +35,17 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
   const data = await withTenant(session.organizationId, async (tx) => {
     const order = await getOrder(tx, id);
     if (!order.ok) return null;
+    const balance = await orderBalance(tx, id);
     return {
       order: order.value,
+      payments: await paymentsForOrder(tx, id),
+      balance: balance.ok ? balance.value : null,
       history: can(session.role, 'read:audit') ? await auditTrailFor(tx, 'sales_order', id) : [],
     };
   });
 
   if (!data) notFound();
-  const { order, history } = data;
+  const { order, payments, balance, history } = data;
   const fmt = (amountMinor: bigint) => formatMoney({ amountMinor, currency: order.currency });
 
   const activeReservations = order.reservations.filter(
@@ -76,9 +82,16 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
             <p className="mt-1 text-sm text-ink-muted">{order.cancellationReason}</p>
           ) : null}
         </Card>
-      ) : order.paymentType === 'CASH' ? (
+      ) : order.paymentType === 'CASH' && order.fulfillmentStatus !== 'READY' ? (
+        // Only while the money is still outstanding. Leaving this up on a settled order would
+        // tell the warehouse to hold goods that have been paid for.
         <Card className="mb-6 border-caution/30 bg-caution-soft" data-testid="awaiting-payment">
           <p className="text-sm text-ink">{t('order.awaitingPayment')}</p>
+          <p className="mt-1 text-xs text-ink-muted">{t('order.noWarehouseYet')}</p>
+        </Card>
+      ) : order.paymentType === 'CASH' ? (
+        <Card className="mb-6 border-positive/30 bg-positive-soft" data-testid="payment-settled">
+          <p className="text-sm text-ink">{t('order.cashSettled')}</p>
           <p className="mt-1 text-xs text-ink-muted">{t('order.noWarehouseYet')}</p>
         </Card>
       ) : (
@@ -212,6 +225,83 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         </TableWrap>
       </section>
 
+      {/* --- money: what has been claimed, what has been confirmed ---------- */}
+      <section className="mb-6">
+        <h2 className="mb-3 text-sm font-semibold text-ink">{t('pay.history')}</h2>
+
+        {balance ? (
+          <Card className="mb-3 grid gap-1.5 text-sm sm:grid-cols-3">
+            <Row label={t('pay.confirmed')} value={fmt(balance.confirmedMinor)} />
+            <Row label={t('pay.outstanding')} value={fmt(balance.outstandingMinor)} />
+            {balance.overpaidMinor > 0n ? (
+              <Row label={t('pay.overpaid')} value={fmt(balance.overpaidMinor)} />
+            ) : null}
+          </Card>
+        ) : null}
+
+        {payments.length > 0 ? (
+          <TableWrap>
+            <thead>
+              <tr>
+                <Th>{t('pay.method')}</Th>
+                <Th>{t('pay.reference')}</Th>
+                <Th className="text-right">{t('pay.claimed')}</Th>
+                <Th className="text-right">{t('pay.confirmed')}</Th>
+                <Th>{t('quote.status')}</Th>
+                <Th>{t('pay.submittedAt')}</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {payments.map((payment) => (
+                <tr key={payment.id} data-testid="order-payment">
+                  <Td>{t(methodKey(payment.method))}</Td>
+                  <Td className="font-mono text-xs">{payment.transactionReference ?? '—'}</Td>
+                  <Td className="tabular text-right">{fmt(payment.amountClaimedMinor)}</Td>
+                  <Td className="tabular text-right">
+                    {payment.amountConfirmedMinor === null
+                      ? '—'
+                      : fmt(payment.amountConfirmedMinor)}
+                  </Td>
+                  <Td>
+                    {can(session.role, 'review:payment') ? (
+                      <Link href={`/payments/${payment.id}`}>
+                        <Badge tone={PAYMENT_STATE_TONE[payment.status]}>
+                          {t(paymentStateKey(payment.status))}
+                        </Badge>
+                      </Link>
+                    ) : (
+                      <Badge tone={PAYMENT_STATE_TONE[payment.status]}>
+                        {t(paymentStateKey(payment.status))}
+                      </Badge>
+                    )}
+                  </Td>
+                  <Td className="text-ink-muted whitespace-nowrap">
+                    {formatDateTime(payment.submittedAt, session.locale, session.timezone)}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        ) : (
+          <Card>
+            <p className="text-sm text-ink-muted">{t('pay.noPayments')}</p>
+          </Card>
+        )}
+
+        {order.status === 'OPEN' &&
+        can(session.role, 'submit:payment-evidence') &&
+        balance &&
+        balance.outstandingMinor > 0n ? (
+          <Card className="mt-3">
+            <h3 className="mb-3 text-sm font-semibold text-ink">{t('pay.submitTitle')}</h3>
+            <SubmitPaymentForm
+              salesOrderId={order.id}
+              outstanding={decimalString(balance.outstandingMinor)}
+            />
+          </Card>
+        ) : null}
+      </section>
+
       {order.status === 'OPEN' && can(session.role, 'cancel:order') ? (
         <section className="mb-6">
           <Card>
@@ -249,6 +339,12 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
       ) : null}
     </>
   );
+}
+
+/** Minor units to the decimal string the payment form pre-fills. */
+function decimalString(minor: bigint): string {
+  const absolute = minor < 0n ? -minor : minor;
+  return `${minor < 0n ? '-' : ''}${absolute / 100n}.${String(absolute % 100n).padStart(2, '0')}`;
 }
 
 function Row({ label, value }: { label: string; value: string }) {

@@ -15,6 +15,7 @@ export const ORDER_STATUS_TONE = {
 
 export const PAYMENT_TONE = {
   UNPAID: 'caution',
+  PARTIALLY_PAID: 'caution',
   NOT_REQUIRED_YET: 'neutral',
   PAID: 'positive',
 } as const;

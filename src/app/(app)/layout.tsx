@@ -19,6 +19,8 @@ const NAV: { href: string; labelKey: MessageKey; permission: Permission }[] = [
   { href: '/quotations', labelKey: 'nav.quotations', permission: 'read:quotation' },
   { href: '/follow-ups', labelKey: 'nav.followUps', permission: 'read:follow-up' },
   { href: '/orders', labelKey: 'nav.orders', permission: 'read:order' },
+  { href: '/payments', labelKey: 'nav.payments', permission: 'review:payment' },
+  { href: '/receivables', labelKey: 'nav.receivables', permission: 'read:receivables' },
   { href: '/customers', labelKey: 'nav.customers', permission: 'read:customer' },
   { href: '/products', labelKey: 'nav.products', permission: 'read:product' },
   { href: '/activity', labelKey: 'nav.activity', permission: 'read:audit' },
