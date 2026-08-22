@@ -1,3 +1,9 @@
+import {
+  type BriefNarration,
+  type BriefNarrationInput,
+  NARRATE_BRIEF_PROMPT_VERSION,
+  briefNarrationSchema,
+} from './brief-contract';
 import { parseInquirySchema } from './contract';
 import type { ParsedIntent } from './contract';
 import { PARSE_INQUIRY_PROMPT_VERSION } from './prompt';
@@ -173,6 +179,27 @@ export class MockAIProvider implements AIProvider {
   private readonly failures = new Map<string, { code: 'PROVIDER_ERROR' | 'TIMEOUT'; message: string }>();
   private readonly seen: string[] = [];
 
+  /** Narration fixtures. Set to exercise invention, malformed output and provider failure. */
+  private briefRaw: unknown = undefined;
+  private briefFailure: { code: 'PROVIDER_ERROR' | 'TIMEOUT' | 'NOT_CONFIGURED'; message: string } | null =
+    null;
+  /** Every narration input the provider was handed, so a test can assert what was disclosed. */
+  readonly briefInputsSeen: BriefNarrationInput[] = [];
+
+  setBriefResponse(raw: unknown): void {
+    this.briefRaw = raw;
+  }
+
+  setBriefFailure(code: 'PROVIDER_ERROR' | 'TIMEOUT' | 'NOT_CONFIGURED', message: string): void {
+    this.briefFailure = { code, message };
+  }
+
+  resetBrief(): void {
+    this.briefRaw = undefined;
+    this.briefFailure = null;
+    this.briefInputsSeen.length = 0;
+  }
+
   /** Makes the provider return an arbitrary unvalidated value, to exercise schema rejection. */
   setRawResponse(text: string, raw: unknown): void {
     this.rawOverrides.set(text, raw);
@@ -234,6 +261,75 @@ export class MockAIProvider implements AIProvider {
     }
 
     return { ok: true, value: validated.data, meta };
+  }
+
+  /**
+   * Narrates a set of figures, deterministically.
+   *
+   * Composes sentences from the supplied values and nothing else — which is what the real
+   * prompt asks a model to do, so a test passing here is testing the same contract. It never
+   * introduces a number of its own, so the grounding check should pass on its output every
+   * time; a test that makes it fail has to say so explicitly via `setBriefResponse`.
+   */
+  async narrateDailyBrief(input: BriefNarrationInput): Promise<AiOutcome<BriefNarration>> {
+    this.briefInputsSeen.push(input);
+
+    const meta = {
+      provider: this.name,
+      model: 'deterministic-rules-v1',
+      promptVersion: NARRATE_BRIEF_PROMPT_VERSION,
+      latencyMs: 0,
+    };
+
+    if (this.briefFailure) {
+      return {
+        ok: false,
+        errorCode: this.briefFailure.code,
+        message: this.briefFailure.message,
+        meta,
+      };
+    }
+
+    const raw = this.briefRaw !== undefined ? this.briefRaw : this.composeNarration(input);
+
+    const validated = briefNarrationSchema.safeParse(raw);
+    if (!validated.success) {
+      return {
+        ok: false,
+        errorCode: 'SCHEMA_INVALID',
+        message: validated.error.issues
+          .slice(0, 3)
+          .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
+          .join('; '),
+        meta,
+      };
+    }
+
+    return { ok: true, value: validated.data, meta };
+  }
+
+  private composeNarration(input: BriefNarrationInput): unknown {
+    const highlights: string[] = [];
+    const attention: string[] = [];
+
+    const orders = input.counts.ordersCreated ?? 0;
+    const orderValue = input.amounts.orderValueToday;
+    const payments = input.amounts.paymentsConfirmedToday;
+    const overdue = input.amounts.overdueReceivables;
+
+    const summary =
+      orders > 0 && orderValue
+        ? `Today brought ${orders} sales orders worth ${orderValue}.`
+        : 'No sales orders have been recorded today.';
+
+    if (payments) highlights.push(`Confirmed payments today came to ${payments}.`);
+    if (overdue) attention.push(`${overdue} remains overdue.`);
+
+    for (const [kind, count] of Object.entries(input.attentionByKind)) {
+      attention.push(`${count} item(s) of type ${kind} need attention.`);
+    }
+
+    return { summary, highlights: highlights.slice(0, 5), attention: attention.slice(0, 6) };
   }
 
   private deterministicParse(text: string): unknown {

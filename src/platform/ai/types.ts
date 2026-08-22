@@ -1,3 +1,4 @@
+import type { BriefNarration, BriefNarrationInput } from './brief-contract';
 import type { ParseInquiryResult } from './contract';
 
 /**
@@ -12,8 +13,15 @@ import type { ParseInquiryResult } from './contract';
  *
  *   parseInquiry   — read an unstructured customer message into proposed items
  *
- * Phases 4, 5 and 7 will add draftFollowUp, extractPaymentMetadata and summarizeDailyBrief on
- * the same seam.
+ * Phase 8 adds the second:
+ *
+ *   narrateDailyBrief — turn already-calculated figures into readable sentences
+ *
+ * Note what that capability is not allowed to be. It receives numbers that have already been
+ * computed and returns prose; it cannot calculate, cannot decide, and cannot reach any record.
+ * A capability named summariseSales, taking a date range and returning totals, would have put
+ * the model on the wrong side of the line — so the seam is shaped to make that impossible
+ * rather than discouraged.
  */
 
 export interface ParseInquiryInput {
@@ -51,4 +59,12 @@ export type AiOutcome<T> =
 export interface AIProvider {
   readonly name: string;
   parseInquiry(input: ParseInquiryInput): Promise<AiOutcome<ParseInquiryResult>>;
+  /**
+   * Narrate a set of already-calculated figures.
+   *
+   * Takes no identifiers and returns no numbers as data. A failure of any kind is an ordinary
+   * outcome: the caller falls back to the deterministic brief, which was written first and is
+   * complete on its own.
+   */
+  narrateDailyBrief(input: BriefNarrationInput): Promise<AiOutcome<BriefNarration>>;
 }

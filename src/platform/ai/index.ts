@@ -3,6 +3,7 @@ import { AnthropicAIProvider } from './anthropic-provider';
 import { MockAIProvider } from './mock-provider';
 import type { AIProvider } from './types';
 
+export * from './brief-contract';
 export * from './contract';
 export * from './types';
 export { MOCK_MALFORMED_SENTINEL, MockAIProvider } from './mock-provider';
