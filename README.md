@@ -7,13 +7,13 @@ The narrow promise:
 > Turn customer inquiries into quotations, orders, follow-ups, payments and delivery handoffs
 > with dramatically less manual work.
 
-**Status: Phase 6 of 8 — warehouse fulfilment and delivery.** Everything through the payment
-gate, plus: an order that has cleared that gate can be sent to the warehouse, picked, and handed
-over — and the handover is the only operation in the product that removes physical stock. Goods
-then go out on a delivery or are collected, and the order is completed operationally without
-that implying anything about whether it has been paid. There is no returns or refunds workflow,
-no route planning and no customer messaging. See [what exists](#what-exists) for the honest
-split.
+**Status: Phase 7 of 8 — fulfilment exceptions and returns.** Everything through delivery, plus
+the two ways it goes wrong: a physical count that disagrees with the system, and a delivery that
+left the yard and did not arrive. Reporting a count changes no stock; correcting it is somebody
+else's decision and is recorded in one ledger with the reason attached. A failed delivery can be
+retried, returned, or written off — and only the portion inspected as sellable ever goes back on
+the shelf. Nothing here refunds money or rewrites what a customer agreed to buy. See
+[what exists](#what-exists) for the honest split.
 
 ---
 
@@ -103,7 +103,7 @@ see its customers or its gravel while signed in to Addis Build Supply, something
 |---|---|
 | Organizations, settings, number sequences | Warehouse preparation and delivery handoff |
 | Users, memberships, sessions, login | Real OCR and real payment-provider integration |
-| Role-based access control (5 roles, 50 permissions) | Dashboard metrics and the daily brief |
+| Role-based access control (5 roles, 61 permissions) | Dashboard metrics and the daily brief |
 | Customers, with credit standing and terms | Real WhatsApp / Telegram / SMS delivery |
 | Products, aliases, stock adjustment with reasons | A production AI provider actually exercised |
 | Inquiry capture, with channel seams | Stock consumption on dispatch |
@@ -115,6 +115,10 @@ see its customers or its gravel while signed in to Addis Build Supply, something
 | Delivery handoff with snapshotted destination | Route planning, maps, ETAs, driver accounts |
 | A collection path that creates no delivery | Proof-of-delivery signature or photograph |
 | Operational completion kept separate from payment | Customer notifications of any kind |
+| Inventory discrepancies, reported and reconciled separately | Refunds, credit notes, payment reversal |
+| One movement ledger explaining every stock change | Backorders and replacement orders |
+| Delivery retry that touches no inventory | Automatic reship after restock |
+| Returns with restockable, damaged and missing all accounted | A damaged-stock location or valuation |
 | Quotations with snapshotted prices and deterministic VAT | Refunds, credit notes and reversals |
 | A rules-driven approval ladder, bound to a payload hash | Bank-feed reconciliation and statements |
 | A deterministic follow-up queue, with a cap and no autosend | Allocating an overpayment to another order |
@@ -204,6 +208,7 @@ Other documents:
 - [`docs/phase-4-orders-and-reservations.md`](docs/phase-4-orders-and-reservations.md) — follow-up rules, acceptance invariants, the order state model, the reservation source of truth and lock ordering
 - [`docs/phase-5-payments-and-receivables.md`](docs/phase-5-payments-and-receivables.md) — the cash review gate, the extraction trust boundary, the confirmation fingerprint, evidence storage and access, and the receivables model
 - [`docs/phase-6-fulfillment-and-delivery.md`](docs/phase-6-fulfillment-and-delivery.md) — the warehouse task state machine, the exact stock consumption boundary, the delivery state machine, order completion, and why completion says nothing about money
+- [`docs/phase-7-fulfillment-exceptions-and-returns.md`](docs/phase-7-fulfillment-exceptions-and-returns.md) — the exception taxonomy, the discrepancy lifecycle, the reservation-shortfall policy, the movement ledger, retry and return semantics, and why none of it touches a confirmed payment
 - [`docs/future-roadmap.md`](docs/future-roadmap.md) — what is deliberately not built, and the seam left for it
 - [`docs/customer-discovery.md`](docs/customer-discovery.md) — interview guide
 - [`docs/validation-scorecard.md`](docs/validation-scorecard.md) — build / pivot / kill criteria

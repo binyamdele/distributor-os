@@ -131,3 +131,21 @@ roadmap is to make deferral cheap, not to schedule the work.
 | Paging the warehouse and delivery queues | Capped at 200, beyond pilot volume | Both are one query |
 | Requiring assignment before dispatch | Would be a field to fill in rather than a control, at this scale | `assignedAt` distinguishes an assigned delivery from an unassigned one |
 | Procurement, supplier management, accounting ledger | Whole products, none of which the narrow promise covers | Stock adjustments and consumed reservations are the raw material a ledger would read |
+
+---
+
+## 7. Deferred by the Phase 7 assessment
+
+| Deferred | Why now is wrong | Seam left behind |
+|---|---|---|
+| Refunds, credit notes, payment reversal | A confirmed payment is immutable by trigger, and correcting money is a second recorded fact whose accounting model has not been asked for. Phase 7 makes the obligation visible instead of resolving it silently | `operationalException` on the order names the unsettled case; confirmed payments are untouched and complete |
+| Customer credit balance | Follows refunds. Without one, a returned load has nowhere to become a credit | The return records exactly what came back in what condition, which is the input a credit would need |
+| Replacement orders and automatic reship after restock | Restocked goods are ordinary free stock. Sending them again needs a new warehouse task and a new consumption; automating it would ship inventory the system still counts | `assessRetryEligibility` refuses with `GOODS_BACK_IN_WAREHOUSE` and says what the honest route would be |
+| Backorders, split shipment, substitution after a shortfall | Same reason Phases 4 and 6 deferred them: a short order is a commercial conversation, and the software's honest contribution is to name the gap | The order carries `STOCK_SHORTFALL` with required and reserved both visible; the accepted quantities are untouched |
+| A damaged-stock bucket | A second stock location means a second set of movements, a valuation question and a disposal workflow. The quantity is preserved without any of that | `quantity_damaged` on the return item; a movement type could route it to a location later |
+| Supplier returns, warranties, RMA portal, customer self-service returns, return shipping labels | All assume a counterparty workflow the product does not have. A pilot distributor arranges returns by telephone | The `Return` record is the physical event; who arranged it is a field away |
+| Stocktake across a whole yard | A discrepancy is the exception a picker hits, not an annual count. A stocktake needs a session, a freeze and a variance report | `InventoryDiscrepancy` is per-product; a `stocktake_id` would group them |
+| Automatic reservation reallocation on a shortfall | Deciding whose order gives way is a conversation with a relationship behind it. Any ranking — by age, value, or a model — would make that decision while appearing to display information | The affected orders are listed unranked with quantities and dates; the action is one explicit permission |
+| Batch and lot tracking, serial numbers, expiry | Cement and rebar are fungible at this scale. Adding lots means every reservation, consumption and return becomes lot-specific | Movements already carry the reservation they came from |
+| Accounting entries and a general ledger | A whole product, and the narrow promise does not cover it | `inventory_movements` is the raw material a ledger would read, deliberately shaped as inventory history rather than as journal entries |
+| Procurement triggered by variance | Reordering on a shortage would act on a number nobody has confirmed yet | The reconciled variance is queryable per product |
