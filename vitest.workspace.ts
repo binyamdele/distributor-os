@@ -30,6 +30,20 @@ export default defineWorkspace([
         'tests/tenancy/**/*.test.ts',
         'tests/security/**/*.test.ts',
       ],
+      /*
+       * The reporting measurement is excluded from the default run.
+       *
+       * It loads several thousand rows into the shared database, and the concurrency tests
+       * around it — advisory-lock serialisation, gapless audit sequences, deadlock avoidance —
+       * began failing intermittently once it joined the same pass. Those failures were the
+       * fixture's weight rather than a product defect: every file passes alone, and a different
+       * one failed on each run.
+       *
+       * It is a measurement, not a correctness assertion, so it runs deliberately via
+       * `pnpm test:perf`. Leaving it in and loosening the concurrency tests to accommodate it
+       * would trade a real guarantee for a number.
+       */
+      exclude: ['tests/integration/dashboard-performance.test.ts', '**/node_modules/**'],
       environment: 'node',
       setupFiles: ['tests/support/setup.ts'],
       /*

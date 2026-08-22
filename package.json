@@ -25,7 +25,9 @@
     "db:deploy": "prisma migrate deploy",
     "db:reset": "prisma migrate reset --force",
     "db:seed": "tsx prisma/seed.ts",
-    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test"
+    "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
+    "seed:volume": "tsx prisma/seed-volume.ts",
+    "test:perf": "vitest run --project integration tests/integration/dashboard-performance.test.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
