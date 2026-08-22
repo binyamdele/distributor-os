@@ -26,6 +26,11 @@ import {
   releaseFulfillmentScenarios,
   seedFulfillmentScenarios,
 } from './seed-fulfillment';
+import {
+  EXCEPTION_SCENARIO_NOTES,
+  releaseExceptionScenarios,
+  seedExceptionScenarios,
+} from './seed-exceptions';
 
 loadEnv();
 
@@ -521,6 +526,10 @@ async function main(): Promise<void> {
     prisma.user.findUniqueOrThrow({ where: { email: 'manager@addisbuild.example' } }),
   ]);
 
+  // Phase 7 first: its returns and movements hang off the Phase 6 records, and an append-only
+  // ledger and an immutable resolved discrepancy both refuse to be rewritten in place.
+  await releaseExceptionScenarios(prisma, ADDIS);
+
   // Before Phase 5 rebuilds its orders: put back anything the last run walked out of the yard.
   // A CONSUMED reservation refuses to be deleted, so the Phase 5 cleanup would fail otherwise.
   await releaseFulfillmentScenarios(prisma, ADDIS);
@@ -536,6 +545,11 @@ async function main(): Promise<void> {
     where: { email: 'warehouse@addisbuild.example' },
   });
   const fulfillmentCount = await seedFulfillmentScenarios(prisma, ADDIS, {
+    warehouseUserId: warehouseUser.id,
+    managerUserId: manager.id,
+  });
+
+  const exceptionCount = await seedExceptionScenarios(prisma, ADDIS, {
     warehouseUserId: warehouseUser.id,
     managerUserId: manager.id,
   });
@@ -558,6 +572,10 @@ async function main(): Promise<void> {
   console.log(`Phase 6 scenarios — ${fulfillmentCount} orders through the warehouse and delivery.`);
   console.log('Sign in as warehouse@addisbuild.example and open "Warehouse":');
   for (const note of FULFILLMENT_SCENARIO_NOTES) console.log(`  ${note}`);
+  console.log('');
+  console.log(`Phase 7 scenarios — ${exceptionCount} fulfilment exceptions.`);
+  console.log('Open "Exceptions" to see counts that disagree and deliveries that did not arrive:');
+  for (const note of EXCEPTION_SCENARIO_NOTES) console.log(`  ${note}`);
 }
 
 main()

@@ -136,6 +136,15 @@ const SCENARIOS: Scenario[] = [
     failureReason: 'WRONG_ADDRESS',
   },
   {
+    key: 'K',
+    note: 'K — Handed over and out on the road. The load Phase 7 uses to show a write-off.',
+    fromPaymentScenario: 'A',
+    onCreditTerms: true,
+    deliveryRequired: true,
+    stage: 'DISPATCHED',
+    driver: { name: 'Tigist Bekele', phone: '+251911000303', vehicle: 'AA-3-24680' },
+  },
+  {
     key: 'J',
     note: 'J — Collected by the customer. Completed with no delivery record at all.',
     fromPaymentScenario: 'H',
@@ -208,6 +217,12 @@ export async function releaseFulfillmentScenarios(
         'ALTER TABLE stock_reservations ENABLE TRIGGER stock_reservations_consumed_immutable',
       );
     }
+
+    // The ledger rows this seed wrote. Removed as the owner, so a demo reset does not leave
+    // movements pointing at shipments that no longer exist.
+    await prisma.inventoryMovement.deleteMany({
+      where: { organizationId, reason: { contains: MARKER } },
+    });
 
     await prisma.salesOrder.updateMany({
       where: { id: { in: orderIds } },
@@ -390,7 +405,7 @@ export async function seedFulfillmentScenarios(
       });
 
       for (const reservation of reservations) {
-        await prisma.product.update({
+        const product = await prisma.product.update({
           where: { id: reservation.productId },
           data: {
             availableStock: { decrement: reservation.quantity },
@@ -400,6 +415,22 @@ export async function seedFulfillmentScenarios(
         await prisma.stockReservation.update({
           where: { id: reservation.id },
           data: { status: 'CONSUMED', releasedAt: hoursAgo(3) },
+        });
+        // Phase 7's ledger, written here too, so the demo can answer "why did this decrease"
+        // for seeded shipments as well as for ones made through the application.
+        await prisma.inventoryMovement.create({
+          data: {
+            organizationId,
+            productId: reservation.productId,
+            movementType: 'FULFILLMENT_CONSUMPTION',
+            delta: -reservation.quantity,
+            stockAfter: product.availableStock,
+            reason: `${MARKER} ${task.taskNumber}: handed over against ${order.orderNumber}`,
+            relatedOrderId: order.id,
+            relatedReservationId: reservation.id,
+            actorId: options.warehouseUserId,
+            createdAt: hoursAgo(3),
+          },
         });
       }
     }

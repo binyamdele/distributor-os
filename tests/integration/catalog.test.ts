@@ -127,7 +127,7 @@ describe('products', () => {
       expect(result.ok).toBe(true);
       expect(result.ok && result.value.stockAfter).toBe(150);
 
-      const [adjustment] = await owner.stockAdjustment.findMany({ where: { productId } });
+      const [adjustment] = await owner.inventoryMovement.findMany({ where: { productId } });
       expect(adjustment).toMatchObject({
         delta: 50,
         stockAfter: 150,
@@ -153,7 +153,7 @@ describe('products', () => {
 
       const product = await owner.product.findUniqueOrThrow({ where: { id: productId } });
       expect(product.availableStock).toBe(100);
-      expect(await owner.stockAdjustment.count()).toBe(0);
+      expect(await owner.inventoryMovement.count()).toBe(0);
     });
 
     it('refuses a zero change', async () => {
@@ -187,7 +187,7 @@ describe('products', () => {
       const expected = 100 + deltas.reduce((total, delta) => total + delta, 0);
 
       expect(product.availableStock).toBe(expected);
-      expect(await owner.stockAdjustment.count()).toBe(deltas.length);
+      expect(await owner.inventoryMovement.count()).toBe(deltas.length);
     });
   });
 
