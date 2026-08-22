@@ -31,3 +31,13 @@ export function prismaEnum(name: string): readonly string[] {
 export const PRISMA_WAREHOUSE_TASK_STATUSES = prismaEnum('WarehouseTaskStatus');
 export const PRISMA_DELIVERY_STATUSES = prismaEnum('DeliveryStatus');
 export const PRISMA_DELIVERY_FAILURE_REASONS = prismaEnum('DeliveryFailureReason');
+
+// Phase 7
+export const PRISMA_DISCREPANCY_STATUSES = prismaEnum('DiscrepancyStatus');
+export const PRISMA_DISCREPANCY_TYPES = prismaEnum('DiscrepancyType');
+export const PRISMA_DISCREPANCY_RESOLUTIONS = prismaEnum('DiscrepancyResolution');
+export const PRISMA_RETURN_STATUSES = prismaEnum('ReturnStatus');
+export const PRISMA_RETURN_REASONS = prismaEnum('ReturnReason');
+export const PRISMA_RETURN_DISPOSITIONS = prismaEnum('ReturnDisposition');
+export const PRISMA_DELIVERY_FAILURE_RESOLUTIONS = prismaEnum('DeliveryFailureResolution');
+export const PRISMA_MOVEMENT_TYPES = prismaEnum('InventoryMovementType');

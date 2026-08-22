@@ -161,6 +161,52 @@ export const PERMISSIONS = [
   /** Record that the customer collected the goods themselves. */
   'record:pickup',
 
+  // --- Phase 7: exceptions and returns --------------------------------------
+  /** See the inventory exceptions list and any return or discrepancy detail. */
+  'read:inventory-exception',
+  /**
+   * Report that the shelf disagrees with the system.
+   *
+   * Held by the warehouse, because they are the people who can count. It creates a *record*,
+   * not a correction: reporting a physical count changes no stock, which is exactly why it is a
+   * different permission from resolving one.
+   */
+  'report:inventory-discrepancy',
+  /** Pick a discrepancy up for investigation. Looking is not deciding. */
+  'review:inventory-discrepancy',
+  /**
+   * Confirm a reconciliation, moving physical stock to the verified count.
+   *
+   * Deliberately **not** held by the warehouse. Whoever reports "I found only sixty" should not
+   * also be the person who writes sixty into the system — the same two-pairs-of-hands reasoning
+   * that keeps payment submission away from payment confirmation.
+   */
+  'resolve:inventory-discrepancy',
+  /**
+   * Decide which customer's reservation gives way when the yard cannot cover them all.
+   *
+   * A commercial decision with a customer on the other end of it, so it sits with sales rather
+   * than the warehouse, and no rule, heuristic or model chooses on anyone's behalf.
+   */
+  'resolve:reservation-shortfall',
+
+  /** Decide that a failed delivery's goods are coming back. */
+  'create:return',
+  /** Record that returned goods physically arrived. */
+  'receive:return',
+  /** Count them and sort them into sellable and broken. */
+  'inspect:return',
+  /**
+   * Put the sellable portion back on the shelf.
+   *
+   * The permission that moves stock upward, and the mirror of 'complete:warehouse-task'.
+   */
+  'complete:return',
+  /** Send a failed delivery out again, without touching stock. */
+  'create:delivery-retry',
+  /** Record that goods left and are not coming back. */
+  'resolve:delivery-loss',
+
   // --- Administration -------------------------------------------------------
   'manage:users',
   'manage:settings',
@@ -216,6 +262,13 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     'dispatch:delivery',
     'complete:delivery',
     'fail:delivery',
+    'read:inventory-exception',
+    'review:inventory-discrepancy',
+    'resolve:inventory-discrepancy',
+    'resolve:reservation-shortfall',
+    'create:return',
+    'create:delivery-retry',
+    'resolve:delivery-loss',
   ],
 
   SALESPERSON: [
@@ -245,6 +298,7 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     /* Read-only. A salesperson answers "where is my order" and moves nothing themselves. */
     'read:warehouse-task',
     'read:delivery',
+    'read:inventory-exception',
   ],
 
   FINANCE: [
@@ -267,6 +321,14 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
     /* Read-only, and for one reason: whether goods went out changes what to say to a debtor. */
     'read:warehouse-task',
     'read:delivery',
+    /*
+     * Finance reads exceptions and mutates none of them.
+     *
+     * A returned or lost delivery on an order that was paid for is a business obligation
+     * somebody has to settle, and Finance is who settles it — but the settling is a later phase,
+     * and being able to see the problem does not make them a warehouse.
+     */
+    'read:inventory-exception',
   ],
 
   WAREHOUSE: [
@@ -291,8 +353,19 @@ export const ROLE_PERMISSIONS: Readonly<Record<Role, readonly Permission[]>> = {
      * records that it happened, and for a pickup that is the warehouse.
      */
     'record:pickup',
+    'read:inventory-exception',
+    'report:inventory-discrepancy',
+    'receive:return',
+    'inspect:return',
+    'complete:return',
     /*
-     * Deliberately absent: assign, dispatch, complete and fail a delivery.
+     * Deliberately absent: resolve:inventory-discrepancy and resolve:reservation-shortfall.
+     *
+     * The warehouse establishes physical reality and is the only role that can. It does not
+     * write that reality into the system unreviewed, and it certainly does not choose which
+     * customer loses their stock — that is a commercial decision with a phone call attached.
+     *
+     * Also deliberately absent: assign, dispatch, complete and fail a delivery.
      *
      * Once goods leave the yard they stop being the warehouse's problem, and a role that could
      * both hand goods out and declare them delivered could close an order end to end with

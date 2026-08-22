@@ -34,7 +34,7 @@ export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'Customer',
   'Product',
   'ProductAlias',
-  'StockAdjustment',
+  'InventoryMovement',
   'AuditEvent',
   'NumberSequence',
   // Phase 2
@@ -57,6 +57,10 @@ export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set([
   'WarehouseTask',
   'WarehouseTaskItem',
   'Delivery',
+  // Phase 7
+  'InventoryDiscrepancy',
+  'Return',
+  'ReturnItem',
 ]);
 
 /**

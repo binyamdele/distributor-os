@@ -50,30 +50,33 @@ model Organization {
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  settings           OrganizationSettings?
-  memberships        Membership[]
-  sessions           Session[]
-  customers          Customer[]
-  products           Product[]
-  productAliases     ProductAlias[]
-  stockAdjustments   StockAdjustment[]
-  auditEvents        AuditEvent[]
-  numberSequences    NumberSequence[]
-  inquiries          Inquiry[]
-  inquiryItems       InquiryItemProposal[]
-  aiInteractions     AiInteraction[]
-  quotations         Quotation[]
-  quotationItems     QuotationItem[]
-  quotationApprovals QuotationApproval[]
-  quotationFollowUps QuotationFollowUp[]
-  salesOrders        SalesOrder[]
-  salesOrderItems    SalesOrderItem[]
-  stockReservations  StockReservation[]
-  payments           Payment[]
-  paymentEvidence    PaymentEvidenceFile[]
-  warehouseTasks     WarehouseTask[]
-  warehouseTaskItems WarehouseTaskItem[]
-  deliveries         Delivery[]
+  settings               OrganizationSettings?
+  memberships            Membership[]
+  sessions               Session[]
+  customers              Customer[]
+  products               Product[]
+  productAliases         ProductAlias[]
+  inventoryMovements     InventoryMovement[]
+  auditEvents            AuditEvent[]
+  numberSequences        NumberSequence[]
+  inquiries              Inquiry[]
+  inquiryItems           InquiryItemProposal[]
+  aiInteractions         AiInteraction[]
+  quotations             Quotation[]
+  quotationItems         QuotationItem[]
+  quotationApprovals     QuotationApproval[]
+  quotationFollowUps     QuotationFollowUp[]
+  salesOrders            SalesOrder[]
+  salesOrderItems        SalesOrderItem[]
+  stockReservations      StockReservation[]
+  payments               Payment[]
+  paymentEvidence        PaymentEvidenceFile[]
+  warehouseTasks         WarehouseTask[]
+  warehouseTaskItems     WarehouseTaskItem[]
+  deliveries             Delivery[]
+  inventoryDiscrepancies InventoryDiscrepancy[]
+  returns                Return[]
+  returnItems            ReturnItem[]
 
   @@map("organizations")
 }
@@ -241,15 +244,17 @@ model Product {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  aliases              ProductAlias[]
-  stockAdjustments     StockAdjustment[]
-  matchedInquiryItems  InquiryItemProposal[] @relation("MatchedProduct")
-  proposedInquiryItems InquiryItemProposal[] @relation("ProposedProduct")
-  quotationItems       QuotationItem[]
-  salesOrderItems      SalesOrderItem[]
-  stockReservations    StockReservation[]
-  warehouseTaskItems   WarehouseTaskItem[]
+  organization           Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  aliases                ProductAlias[]
+  inventoryMovements     InventoryMovement[]
+  matchedInquiryItems    InquiryItemProposal[]  @relation("MatchedProduct")
+  proposedInquiryItems   InquiryItemProposal[]  @relation("ProposedProduct")
+  quotationItems         QuotationItem[]
+  salesOrderItems        SalesOrderItem[]
+  stockReservations      StockReservation[]
+  warehouseTaskItems     WarehouseTaskItem[]
+  inventoryDiscrepancies InventoryDiscrepancy[]
+  returnItems            ReturnItem[]
 
   @@unique([organizationId, sku])
   @@index([organizationId])
@@ -290,23 +295,49 @@ model ProductAlias {
 /// Every movement of stock, with a reason. Kept complete from Phase 1 because reorder
 /// recommendations and demand forecasting later depend on an unbroken history — and because
 /// "who changed the cement count" is a question distributors actually ask.
-model StockAdjustment {
-  id             String   @id @default(uuid()) @db.Uuid
-  organizationId String   @map("organization_id") @db.Uuid
-  productId      String   @map("product_id") @db.Uuid
-  /// Signed: positive is a receipt, negative is a removal.
-  delta          Int
-  stockAfter     Int      @map("stock_after")
-  reason         String
-  actorId        String?  @map("actor_id") @db.Uuid
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+/// Why physical stock changed, and on whose authority.
+///
+/// This *is* Phase 1's `StockAdjustment`, renamed and widened rather than replaced. Phase 1 gave
+/// it the right shape — product, signed delta, resulting quantity, reason, actor, timestamp —
+/// and the only thing wrong with it was its scope: manual corrections were recorded here while
+/// fulfilment consumption was recorded only in the audit log, so no single place could answer
+/// "why did Rebar 12mm decrease by 40". Phase 7 makes every physical stock change land here,
+/// with the event that caused it attached.
+///
+/// Two competing stock-mutation paths would be worse than none, so the Phase 1 rows carry
+/// forward as MANUAL_ADJUSTMENT rather than being orphaned beside a new table.
+///
+/// Deliberately not an accounting ledger and deliberately not event sourcing: `available_stock`
+/// on the product stays the authority, and this is the history that explains it.
+model InventoryMovement {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  productId      String @map("product_id") @db.Uuid
+
+  movementType InventoryMovementType @default(MANUAL_ADJUSTMENT) @map("movement_type")
+
+  /// Signed: positive is a receipt, negative is a removal. Never zero — a movement that moved
+  /// nothing is noise in the one history a stock dispute is settled from.
+  delta      Int
+  stockAfter Int    @map("stock_after")
+  reason     String
+
+  /// What caused it. All nullable, because a manual count correction relates to none of them.
+  relatedOrderId       String? @map("related_order_id") @db.Uuid
+  relatedReservationId String? @map("related_reservation_id") @db.Uuid
+  relatedDiscrepancyId String? @map("related_discrepancy_id") @db.Uuid
+  relatedReturnId      String? @map("related_return_id") @db.Uuid
+
+  actorId   String?  @map("actor_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([organizationId])
   @@index([productId])
-  @@map("stock_adjustments")
+  @@index([organizationId, productId, createdAt])
+  @@map("inventory_movements")
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +386,8 @@ enum SequenceKind {
   ORDER
   WAREHOUSE_TASK
   DELIVERY
+  RETURN
+  DISCREPANCY
 }
 
 /// Q-000001 and SO-000001. Allocated under a row lock so two salespeople clicking at the same
@@ -920,6 +953,11 @@ model SalesOrder {
   /// The collection path, for an order that needs no delivery. A lightweight pair of fields
   /// rather than a Delivery row that never leaves the yard — inventing a delivery for a
   /// customer who drove in would make the delivery queue lie about what is on the road.
+  /// Phase 7. An operational problem the order is carrying. Nullable, and never a substitute
+  /// for what the customer agreed to buy: the accepted quantities are untouched by any of it.
+  operationalException     OrderOperationalException? @map("operational_exception")
+  operationalExceptionNote String?                    @map("operational_exception_note")
+
   pickedUpAt   DateTime? @map("picked_up_at") @db.Timestamptz(6)
   pickedUpById String?   @map("picked_up_by_id") @db.Uuid
   pickupNote   String?   @map("pickup_note")
@@ -928,14 +966,16 @@ model SalesOrder {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  quotation      Quotation          @relation(fields: [quotationId], references: [id], onDelete: Restrict)
-  customer       Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict)
-  items          SalesOrderItem[]
-  reservations   StockReservation[]
-  payments       Payment[]
-  warehouseTasks WarehouseTask[]
-  deliveries     Delivery[]
+  organization           Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  quotation              Quotation              @relation(fields: [quotationId], references: [id], onDelete: Restrict)
+  customer               Customer               @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  items                  SalesOrderItem[]
+  reservations           StockReservation[]
+  payments               Payment[]
+  warehouseTasks         WarehouseTask[]
+  deliveries             Delivery[]
+  inventoryDiscrepancies InventoryDiscrepancy[]
+  returns                Return[]
 
   @@unique([organizationId, orderNumber])
   @@index([organizationId])
@@ -982,6 +1022,7 @@ model SalesOrderItem {
   product        Product?            @relation(fields: [productId], references: [id], onDelete: SetNull)
   reservations   StockReservation[]
   warehouseItems WarehouseTaskItem[]
+  returnItems    ReturnItem[]
 
   @@index([organizationId])
   @@index([salesOrderId])
@@ -1015,10 +1056,11 @@ model StockReservation {
   releasedAt DateTime? @map("released_at") @db.Timestamptz(6)
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  salesOrder     SalesOrder     @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
-  salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
-  product        Product        @relation(fields: [productId], references: [id], onDelete: Restrict)
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  salesOrder     SalesOrder             @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  salesOrderItem SalesOrderItem         @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
+  product        Product                @relation(fields: [productId], references: [id], onDelete: Restrict)
+  discrepancies  InventoryDiscrepancy[]
 
   @@index([organizationId])
   @@index([salesOrderId])
@@ -1208,11 +1250,12 @@ model WarehouseTask {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  organization Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  salesOrder   SalesOrder          @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
-  assignedUser User?               @relation("WarehouseTaskAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
-  items        WarehouseTaskItem[]
-  deliveries   Delivery[]
+  organization           Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  salesOrder             SalesOrder             @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  assignedUser           User?                  @relation("WarehouseTaskAssignee", fields: [assignedUserId], references: [id], onDelete: SetNull)
+  items                  WarehouseTaskItem[]
+  deliveries             Delivery[]
+  inventoryDiscrepancies InventoryDiscrepancy[]
 
   @@unique([organizationId, taskNumber])
   @@index([organizationId])
@@ -1310,8 +1353,20 @@ model Delivery {
 
   failureReason DeliveryFailureReason? @map("failure_reason")
   failureNote   String?                @map("failure_note")
+
+  /// Phase 7. How the failure was dealt with, recorded *beside* the failure rather than
+  /// instead of it. FAILED stays FAILED; this says what happened next.
+  failureResolution DeliveryFailureResolution? @map("failure_resolution")
+  resolvedById      String?                    @map("resolved_by_id") @db.Uuid
+  resolvedAt        DateTime?                  @map("resolved_at") @db.Timestamptz(6)
+
+  /// The attempt this one replaces. A retry is a new delivery, not an edit of the old one, so
+  /// "DL-000010 failed, DL-000011 retried it, delivered" stays answerable forever.
+  retryOfDeliveryId String? @map("retry_of_delivery_id") @db.Uuid
+  /// 1 for the first run, 2 for the first retry, and so on.
+  attemptNumber     Int     @default(1) @map("attempt_number")
   /// What staff wrote down. Not proof of delivery — there is no signature and no photo.
-  deliveryNote  String?                @map("delivery_note")
+  deliveryNote      String? @map("delivery_note")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1319,10 +1374,271 @@ model Delivery {
   organization  Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   salesOrder    SalesOrder    @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
   warehouseTask WarehouseTask @relation(fields: [warehouseTaskId], references: [id], onDelete: Restrict)
+  retryOf       Delivery?     @relation("DeliveryRetry", fields: [retryOfDeliveryId], references: [id], onDelete: SetNull)
+  retries       Delivery[]    @relation("DeliveryRetry")
+  returns       Return[]
 
   @@unique([organizationId, deliveryNumber])
   @@index([organizationId])
   @@index([organizationId, status])
   @@index([salesOrderId])
   @@map("deliveries")
+}
+
+// ---------------------------------------------------------------------------
+// Phase 7 — fulfilment exceptions and returns
+// ---------------------------------------------------------------------------
+
+enum InventoryMovementType {
+  /// A counted correction, made by a person who walked the shelf. Phase 1's original meaning.
+  MANUAL_ADJUSTMENT
+  /// Goods leaving warehouse custody against an order. Phase 6's consumption.
+  FULFILLMENT_CONSUMPTION
+  /// A discrepancy reconciled to a verified physical count.
+  DISCREPANCY_RECONCILIATION
+  /// Returned goods inspected and put back on the sellable shelf.
+  RETURN_RESTOCK
+  OTHER
+}
+
+/// What kind of gap between the system and the yard.
+enum DiscrepancyType {
+  PHYSICAL_SHORTAGE
+  PHYSICAL_OVERAGE
+  DAMAGED_STOCK
+  /// The reservation rows and the order requirement disagree, independent of the physical count.
+  RESERVATION_MISMATCH
+  OTHER
+}
+
+enum DiscrepancyStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  CANCELLED
+}
+
+enum DiscrepancyResolution {
+  /// Physical stock corrected to the verified count.
+  STOCK_RECONCILED
+  /// The recount agreed with the system; nothing moved.
+  COUNT_CONFIRMED_NO_CHANGE
+  /// Withdrawn — miscounted, wrong product, wrong bay.
+  NO_ACTION_REQUIRED
+}
+
+/// A gap between what the system believes is in the yard and what somebody counted.
+///
+/// Narrow on purpose: this is not incident management. Reporting is one act and resolving is
+/// another, held by different people, because whoever finds sixty bags where the system says a
+/// hundred should not also be the person who decides whose order loses its stock.
+model InventoryDiscrepancy {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  discrepancyNumber String @map("discrepancy_number")
+
+  /// Where it was noticed. Both nullable: a stock count on a quiet afternoon belongs to no order.
+  warehouseTaskId String? @map("warehouse_task_id") @db.Uuid
+  salesOrderId    String? @map("sales_order_id") @db.Uuid
+  productId       String  @map("product_id") @db.Uuid
+  reservationId   String? @map("reservation_id") @db.Uuid
+
+  discrepancyType DiscrepancyType   @map("discrepancy_type")
+  status          DiscrepancyStatus @default(OPEN)
+
+  /// Everything observed at the moment of reporting, kept verbatim.
+  ///
+  /// Snapshots rather than live reads, because the value of the record is that it says what the
+  /// system claimed *at the time somebody disagreed with it*. Re-deriving these later would
+  /// erase the disagreement, which is the only thing worth keeping.
+  systemOnHandQuantity   Int  @map("system_on_hand_quantity")
+  systemReservedQuantity Int  @map("system_reserved_quantity")
+  expectedTaskQuantity   Int? @map("expected_task_quantity")
+  physicalCountQuantity  Int  @map("physical_count_quantity")
+  /// physicalCount − systemOnHand. Negative is a shortage.
+  varianceQuantity       Int  @map("variance_quantity")
+
+  reportNote String? @map("report_note")
+
+  reportedById String?  @map("reported_by_id") @db.Uuid
+  reportedAt   DateTime @default(now()) @map("reported_at") @db.Timestamptz(6)
+
+  reviewedById String?   @map("reviewed_by_id") @db.Uuid
+  reviewedAt   DateTime? @map("reviewed_at") @db.Timestamptz(6)
+
+  resolutionType DiscrepancyResolution? @map("resolution_type")
+  resolutionNote String?                @map("resolution_note")
+  resolvedById   String?                @map("resolved_by_id") @db.Uuid
+  resolvedAt     DateTime?              @map("resolved_at") @db.Timestamptz(6)
+
+  /// Set when the verified count cannot support the reservations already committed.
+  ///
+  /// Reconciliation refuses to finalise while this stands, because persisting the count would
+  /// leave available_stock below reserved_stock — a state the database rejects and, worse, a
+  /// promise to a customer the yard cannot keep. Clearing it is a commercial decision about
+  /// whose order gives way, and that is not the warehouse's to make.
+  reservationShortfall Int? @map("reservation_shortfall")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization  Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  product       Product           @relation(fields: [productId], references: [id], onDelete: Restrict)
+  warehouseTask WarehouseTask?    @relation(fields: [warehouseTaskId], references: [id], onDelete: SetNull)
+  salesOrder    SalesOrder?       @relation(fields: [salesOrderId], references: [id], onDelete: SetNull)
+  reservation   StockReservation? @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, discrepancyNumber])
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([warehouseTaskId])
+  @@index([organizationId, productId, status])
+  @@map("inventory_discrepancies")
+}
+
+enum ReturnStatus {
+  /// Agreed to come back; nothing has arrived.
+  EXPECTED
+  /// Physically back in the yard, uninspected.
+  RECEIVED
+  /// Counted and sorted into restockable and damaged.
+  INSPECTED
+  /// Stock has moved. Terminal.
+  COMPLETED
+  CANCELLED
+}
+
+enum ReturnReason {
+  DELIVERY_FAILED
+  CUSTOMER_REJECTED
+  WRONG_GOODS
+  DAMAGED_IN_TRANSIT
+  OTHER
+}
+
+enum ReturnDisposition {
+  RESTOCK
+  DAMAGED
+  MISSING
+  MIXED
+}
+
+/// Goods physically coming back, and nothing else.
+///
+/// Not a refund, not a credit note, not a cancellation. A return moves inventory and records
+/// what arrived in what condition. What the customer is owed is a commercial question this
+/// phase deliberately leaves open and visible rather than answering automatically.
+model Return {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  returnNumber String @map("return_number")
+  salesOrderId String @map("sales_order_id") @db.Uuid
+  /// The delivery these goods went out on. Never rewritten — this record exists precisely so
+  /// that the failed delivery does not have to be.
+  deliveryId   String @map("delivery_id") @db.Uuid
+
+  status       ReturnStatus @default(EXPECTED)
+  returnReason ReturnReason @map("return_reason")
+  note         String?
+
+  receivedById String?   @map("received_by_id") @db.Uuid
+  receivedAt   DateTime? @map("received_at") @db.Timestamptz(6)
+
+  inspectedById String?   @map("inspected_by_id") @db.Uuid
+  inspectedAt   DateTime? @map("inspected_at") @db.Timestamptz(6)
+
+  createdById String?   @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  salesOrder   SalesOrder   @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  delivery     Delivery     @relation(fields: [deliveryId], references: [id], onDelete: Restrict)
+  items        ReturnItem[]
+
+  @@unique([organizationId, returnNumber])
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([salesOrderId])
+  @@index([deliveryId])
+  @@map("returns")
+}
+
+/// One line of a return.
+///
+/// The arithmetic is pinned by a CHECK rather than by intention:
+///
+///     quantityReceived = quantityRestockable + quantityDamaged
+///     quantityExpected = quantityReceived + quantityMissing
+///
+/// So nothing disappears. Eighty went out, seventy-six came back sellable, four came back
+/// broken — and if only seventy-eight arrived at all, two are recorded as missing rather than
+/// quietly dropped out of the sum.
+model ReturnItem {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  returnId         String  @map("return_id") @db.Uuid
+  salesOrderItemId String  @map("sales_order_item_id") @db.Uuid
+  productId        String? @map("product_id") @db.Uuid
+
+  skuSnapshot         String @map("sku_snapshot")
+  descriptionSnapshot String @map("description_snapshot")
+  unitSnapshot        String @map("unit_snapshot")
+
+  /// What went out on the delivery. The ceiling for everything below it.
+  quantityDispatched Int @map("quantity_dispatched")
+
+  quantityExpected    Int @map("quantity_expected")
+  quantityReceived    Int @default(0) @map("quantity_received")
+  quantityRestockable Int @default(0) @map("quantity_restockable")
+  quantityDamaged     Int @default(0) @map("quantity_damaged")
+  /// Before inspection this holds the whole expected quantity: nothing has arrived, so all of
+  /// it is outstanding. Inspection redistributes it, and the identity above stays true
+  /// throughout rather than only at the end.
+  quantityMissing     Int @default(0) @map("quantity_missing")
+
+  disposition ReturnDisposition @default(RESTOCK)
+  note        String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  return         Return         @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
+  product        Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([returnId])
+  @@map("return_items")
+}
+
+/// How a failed delivery was dealt with. Set on the failed delivery itself, never replacing
+/// its FAILED status — the failure happened, and a resolution is a second fact about it.
+enum DeliveryFailureResolution {
+  RETRY_DELIVERY
+  RETURNED_TO_WAREHOUSE
+  LOST_OR_UNRECOVERABLE
+}
+
+/// An operational problem an order is carrying, kept off `status` deliberately.
+///
+/// A fourth SalesOrderStatus value would have to be ordered against OPEN, CANCELLED and
+/// COMPLETED, and it does not belong in that sequence: an order with a stock shortfall is still
+/// open, and an order whose goods were lost is neither finished nor cancelled. Keeping it in its
+/// own nullable column means the completion rules and the commercial record both stay as they
+/// were, and the exception can be cleared without rewriting either.
+enum OrderOperationalException {
+  /// Reservation was reduced below what the accepted order requires.
+  STOCK_SHORTFALL
+  /// A delivery failed and has not been resolved.
+  DELIVERY_FAILED
+  /// Goods left and will not come back. Money already taken stays taken.
+  DELIVERY_LOST
+  /// Goods came back to the yard. What the customer is owed is unresolved.
+  GOODS_RETURNED
 }

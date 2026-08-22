@@ -78,6 +78,13 @@ describe('the matrix', () => {
       'dispatch:delivery',
       'complete:delivery',
       'fail:delivery',
+      'read:inventory-exception',
+      'review:inventory-discrepancy',
+      'resolve:inventory-discrepancy',
+      'resolve:reservation-shortfall',
+      'create:return',
+      'create:delivery-retry',
+      'resolve:delivery-loss',
     ],
     SALESPERSON: [
       'read:dashboard',
@@ -105,6 +112,7 @@ describe('the matrix', () => {
       'approve:customer-message',
       'read:warehouse-task',
       'read:delivery',
+      'read:inventory-exception',
     ],
     FINANCE: [
       'read:dashboard',
@@ -121,6 +129,7 @@ describe('the matrix', () => {
       'approve:customer-message',
       'read:warehouse-task',
       'read:delivery',
+      'read:inventory-exception',
     ],
     WAREHOUSE: [
       'read:dashboard',
@@ -135,6 +144,11 @@ describe('the matrix', () => {
       'prepare:warehouse-task',
       'complete:warehouse-task',
       'record:pickup',
+      'read:inventory-exception',
+      'report:inventory-discrepancy',
+      'receive:return',
+      'inspect:return',
+      'complete:return',
     ],
   };
 
@@ -371,6 +385,73 @@ describe('separation of duties', () => {
     // negotiates a price should be able to perform it.
     for (const role of ['SALESPERSON', 'SALES_MANAGER', 'FINANCE'] as const) {
       expect(can(role, 'complete:warehouse-task')).toBe(false);
+    }
+  });
+
+  it('separates counting the shelf from writing the count into stock', () => {
+    // The Phase 7 equivalent of the payment gate. Whoever reports "I found only sixty" is not
+    // the person who makes sixty the truth — otherwise one person could move inventory by
+    // typing a number into a box, and the record of what the system used to claim would be
+    // gone at the moment it was created.
+    expect(can('WAREHOUSE', 'report:inventory-discrepancy')).toBe(true);
+    expect(can('WAREHOUSE', 'resolve:inventory-discrepancy')).toBe(false);
+    expect(can('SALES_MANAGER', 'resolve:inventory-discrepancy')).toBe(true);
+    expect(can('OWNER_ADMIN', 'resolve:inventory-discrepancy')).toBe(true);
+  });
+
+  it('keeps the choice of whose order gives way away from the warehouse', () => {
+    // Reducing a reservation means telephoning a customer to say their cement is not coming.
+    // The warehouse establishes physical reality; sales decides commercial priority.
+    expect(can('WAREHOUSE', 'resolve:reservation-shortfall')).toBe(false);
+    expect(can('SALESPERSON', 'resolve:reservation-shortfall')).toBe(false);
+    expect(can('FINANCE', 'resolve:reservation-shortfall')).toBe(false);
+    expect(can('SALES_MANAGER', 'resolve:reservation-shortfall')).toBe(true);
+  });
+
+  it('lets the warehouse handle physical returns and nothing commercial', () => {
+    // They receive, count and restock, because those are physical acts. Deciding that goods
+    // should come back at all is a decision about a customer.
+    for (const permission of ['receive:return', 'inspect:return', 'complete:return'] as const) {
+      expect(can('WAREHOUSE', permission)).toBe(true);
+      expect(can('SALESPERSON', permission)).toBe(false);
+      expect(can('FINANCE', permission)).toBe(false);
+    }
+    expect(can('WAREHOUSE', 'create:return')).toBe(false);
+    expect(can('SALES_MANAGER', 'create:return')).toBe(true);
+  });
+
+  it('keeps failed-delivery resolution with sales', () => {
+    // Retry, return or write off: three commercial choices with a customer on the other end.
+    for (const permission of [
+      'create:delivery-retry',
+      'create:return',
+      'resolve:delivery-loss',
+    ] as const) {
+      expect(can('SALES_MANAGER', permission)).toBe(true);
+      expect(can('WAREHOUSE', permission)).toBe(false);
+      expect(can('SALESPERSON', permission)).toBe(false);
+      expect(can('FINANCE', permission)).toBe(false);
+    }
+  });
+
+  it('lets everyone see an exception and almost nobody act on one', () => {
+    for (const role of ['WAREHOUSE', 'SALESPERSON', 'SALES_MANAGER', 'FINANCE'] as const) {
+      expect(can(role, 'read:inventory-exception')).toBe(true);
+    }
+    // Finance sees a returned or lost delivery because somebody has to settle it, and seeing
+    // the problem does not make them a warehouse.
+    expect(can('FINANCE', 'report:inventory-discrepancy')).toBe(false);
+    expect(can('FINANCE', 'complete:return')).toBe(false);
+    expect(can('FINANCE', 'resolve:inventory-discrepancy')).toBe(false);
+  });
+
+  it('did not grow a generic inventory or returns permission', () => {
+    // A single manage:inventory would collapse counting, correcting, restocking and deciding
+    // whose order gives way into one grant, and every separation above would be decorative.
+    for (const permission of PERMISSIONS) {
+      expect(permission).not.toBe('manage:inventory');
+      expect(permission).not.toBe('manage:returns');
+      expect(permission).not.toBe('manage:orders');
     }
   });
 

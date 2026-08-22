@@ -21,7 +21,13 @@ import type { TenantTransaction } from '@/platform/db';
  * That is the correct trade: a gap is a cosmetic oddity, a duplicate is a commercial dispute.
  */
 
-export type SequenceKind = 'QUOTATION' | 'ORDER' | 'WAREHOUSE_TASK' | 'DELIVERY';
+export type SequenceKind =
+  | 'QUOTATION'
+  | 'ORDER'
+  | 'WAREHOUSE_TASK'
+  | 'DELIVERY'
+  | 'RETURN'
+  | 'DISCREPANCY';
 
 const PREFIX: Readonly<Record<SequenceKind, string>> = {
   QUOTATION: 'Q',
@@ -29,6 +35,10 @@ const PREFIX: Readonly<Record<SequenceKind, string>> = {
   // Phase 6. A picker calls out "WT-000042" across a yard; an order id does not survive that.
   WAREHOUSE_TASK: 'WT',
   DELIVERY: 'DL',
+  // Phase 7. A discrepancy is a phone call between a yard and an office; both ends need to be
+  // able to say which one they mean.
+  RETURN: 'RT',
+  DISCREPANCY: 'IR',
 };
 
 /** Six digits, widening beyond that rather than wrapping. Q-000001 … Q-999999 … Q-1000000. */
