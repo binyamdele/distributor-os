@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { requirePermission } from '@/app/lib/session';
 import { withTenant } from '@/platform/db';
 import { getDelivery } from '@/modules/fulfillment';
+import { deliveryAttempts } from '@/modules/inventory';
 import { auditTrailFor } from '@/modules/audit';
 import { can } from '@/platform/rbac';
 import { formatDateTime, t } from '@/platform/i18n';
@@ -15,6 +16,7 @@ import {
   DispatchForm,
   FailDeliveryForm,
 } from '../delivery-forms';
+import { LossForm, RetryForm, ReturnForm } from '../../exceptions/exception-forms';
 
 /**
  * One delivery run.
@@ -32,12 +34,15 @@ export default async function DeliveryPage({ params }: { params: Promise<{ id: s
     if (!delivery.ok) return null;
     return {
       delivery: delivery.value,
+      attempts: await deliveryAttempts(tx, delivery.value.orderId),
       history: can(session.role, 'read:audit') ? await auditTrailFor(tx, 'delivery', id) : [],
     };
   });
 
   if (!data) notFound();
-  const { delivery, history } = data;
+  const { delivery, attempts, history } = data;
+  const thisAttempt = attempts.find((attempt) => attempt.id === delivery.id);
+  const resolved = thisAttempt?.failureResolution ?? null;
 
   const live = delivery.status === 'PENDING' || delivery.status === 'ASSIGNED';
 
@@ -66,6 +71,83 @@ export default async function DeliveryPage({ params }: { params: Promise<{ id: s
         </Card>
       ) : null}
 
+      {delivery.status === 'FAILED' && !resolved ? (
+        <section className="mb-6" data-testid="failure-resolution">
+          <h2 className="mb-1 text-sm font-semibold text-ink">{t('fail.chooseAction')}</h2>
+          <p className="mb-3 text-xs text-ink-faint">{t('fail.goodsGone')}</p>
+          <div className="space-y-3">
+            {can(session.role, 'create:delivery-retry') ? (
+              <Card>
+                <RetryForm deliveryId={delivery.id} />
+              </Card>
+            ) : null}
+            {can(session.role, 'create:return') ? (
+              <Card>
+                <ReturnForm deliveryId={delivery.id} />
+              </Card>
+            ) : null}
+            {can(session.role, 'resolve:delivery-loss') ? (
+              <Card>
+                <LossForm deliveryId={delivery.id} />
+              </Card>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {delivery.status === 'FAILED' && resolved ? (
+        <Card className="mb-6" data-testid="failure-resolved">
+          <p className="text-sm text-ink">
+            {t('fail.resolved')}: {resolved.toLowerCase().replace(/_/g, ' ')}
+          </p>
+        </Card>
+      ) : null}
+
+      {attempts.length > 1 ? (
+        <section className="mb-6" data-testid="attempt-history">
+          <h2 className="mb-3 text-sm font-semibold text-ink">{t('fail.attempts')}</h2>
+          <TableWrap>
+            <thead>
+              <tr>
+                <Th>{t('fail.attempt')}</Th>
+                <Th>{t('del.number')}</Th>
+                <Th>{t('quote.status')}</Th>
+                <Th>{t('fail.resolved')}</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {attempts.map((attempt) => (
+                <tr
+                  key={attempt.id}
+                  data-testid="attempt-row"
+                  className={attempt.id === delivery.id ? 'bg-surface-sunken' : undefined}
+                >
+                  <Td className="tabular">{attempt.attemptNumber}</Td>
+                  <Td>
+                    <Link
+                      href={`/deliveries/${attempt.id}`}
+                      className="font-mono text-accent hover:underline"
+                    >
+                      {attempt.deliveryNumber}
+                    </Link>
+                  </Td>
+                  <Td>
+                    <Badge tone={DELIVERY_TONE[attempt.status as keyof typeof DELIVERY_TONE]}>
+                      {t(deliveryStatusKey(attempt.status))}
+                    </Badge>
+                  </Td>
+                  <Td className="text-ink-muted">
+                    {attempt.failureResolution
+                      ? attempt.failureResolution.toLowerCase().replace(/_/g, ' ')
+                      : '—'}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </TableWrap>
+        </section>
+      ) : null}
+
       {delivery.status === 'DELIVERED' ? (
         <Card className="mb-6 border-positive/30 bg-positive-soft" data-testid="delivery-delivered">
           <p className="text-sm text-ink">
@@ -86,6 +168,9 @@ export default async function DeliveryPage({ params }: { params: Promise<{ id: s
             <Row label={t('customer.phone')} value={delivery.customerPhone} />
           ) : null}
           <Row label={t('del.destination')} value={delivery.destination} />
+          {thisAttempt && thisAttempt.attemptNumber > 1 ? (
+            <Row label={t('fail.attempt')} value={String(thisAttempt.attemptNumber)} />
+          ) : null}
           <div className="pt-1">
             <Link
               href={`/orders/${delivery.orderId}`}

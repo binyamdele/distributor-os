@@ -23,6 +23,7 @@ import { SubmitPaymentForm } from '../../payments/submit-form';
 import { PAYMENT_STATE_TONE, methodKey, paymentStateKey } from '../../payments/page';
 import { TASK_TONE, taskStatusKey } from '../../warehouse/page';
 import { DELIVERY_TONE, deliveryStatusKey } from '../../deliveries/page';
+import { ORDER_EXCEPTION_TONE, orderExceptionKey } from '../../exceptions/page';
 
 /**
  * The sales order screen.
@@ -228,6 +229,33 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
           </tbody>
         </TableWrap>
       </section>
+
+      {/*
+       * An operational problem the order is carrying.
+       *
+       * Deliberately separate from its status and from its payment position: an order with a
+       * stock shortfall is still open, and one whose goods were lost is neither finished nor
+       * cancelled. Saying so plainly is better than encoding it into a status that would then
+       * have to be ordered against the other three.
+       */}
+      {order.operationalException ? (
+        <Card className="mb-6 border-critical/30 bg-critical-soft" data-testid="order-exception">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={ORDER_EXCEPTION_TONE[order.operationalException]}>
+              {t(orderExceptionKey(order.operationalException))}
+            </Badge>
+            <span className="text-sm text-ink">{t('orderExc.title')}</span>
+          </div>
+          {order.operationalExceptionNote ? (
+            <p className="mt-2 text-sm text-ink-muted">{order.operationalExceptionNote}</p>
+          ) : null}
+          {balance && balance.confirmedMinor > 0n ? (
+            <p className="mt-2 text-sm text-ink" data-testid="exception-money">
+              {t('fail.paidWarning')}
+            </p>
+          ) : null}
+        </Card>
+      ) : null}
 
       {/* --- fulfilment: where the goods are ---------------------------------- */}
       {fulfillment.task || fulfillment.delivery || order.pickedUpAt ? (

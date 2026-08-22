@@ -193,9 +193,19 @@ export function EmptyState({ message }: { message: string }) {
   return <div className="px-4 py-10 text-center text-sm text-ink-faint">{message}</div>;
 }
 
-export function ErrorNote({ children }: { children: ReactNode }) {
+export function ErrorNote({
+  children,
+  'data-testid': testId,
+}: {
+  children: ReactNode;
+  /** Named explicitly: the component took no extra props, so one passed in was silently lost. */
+  'data-testid'?: string;
+}) {
   return (
-    <div className="rounded-md border border-critical/30 bg-critical-soft px-3 py-2 text-sm text-critical">
+    <div
+      className="rounded-md border border-critical/30 bg-critical-soft px-3 py-2 text-sm text-critical"
+      data-testid={testId}
+    >
       {children}
     </div>
   );

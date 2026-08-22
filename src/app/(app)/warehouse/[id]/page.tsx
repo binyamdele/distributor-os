@@ -3,11 +3,13 @@ import { notFound } from 'next/navigation';
 import { requirePermission } from '@/app/lib/session';
 import { withTenant } from '@/platform/db';
 import { getWarehouseTask } from '@/modules/fulfillment';
+import { blockingDiscrepancies } from '@/modules/inventory';
 import { auditTrailFor } from '@/modules/audit';
 import { can } from '@/platform/rbac';
 import { formatDateTime, t } from '@/platform/i18n';
 import { Badge, Card, PageHeader, TableWrap, Td, Th } from '@/components/ui';
 import { TASK_TONE, taskStatusKey } from '../page';
+import { ReportCountForm } from '../../exceptions/exception-forms';
 import {
   CancelTaskForm,
   CompleteTaskForm,
@@ -38,6 +40,7 @@ export default async function WarehouseTaskPage({
     if (!task.ok) return null;
     return {
       task: task.value,
+      blocking: await blockingDiscrepancies(tx, id),
       history: can(session.role, 'read:audit')
         ? await auditTrailFor(tx, 'warehouse_task', id)
         : [],
@@ -45,7 +48,7 @@ export default async function WarehouseTaskPage({
   });
 
   if (!data) notFound();
-  const { task, history } = data;
+  const { task, blocking, history } = data;
 
   const allPicked = task.items.every((item) => item.prepared);
 
@@ -81,6 +84,26 @@ export default async function WarehouseTaskPage({
           {task.order.pickedUpAt ? (
             <p className="mt-1 text-sm text-ink-muted">{t('wh.pickedUp')}</p>
           ) : null}
+        </Card>
+      ) : null}
+
+      {blocking.length > 0 ? (
+        <Card className="mb-6 border-critical/30 bg-critical-soft" data-testid="blocked-by-count">
+          <h2 className="text-sm font-semibold text-critical">{t('exc.blockedByCount')}</h2>
+          <ul className="mt-2 space-y-1 text-sm text-ink">
+            {blocking.map((entry) => (
+              <li key={entry.id}>
+                <Link
+                  href={`/exceptions/${entry.id}`}
+                  className="font-mono text-accent hover:underline"
+                >
+                  {entry.discrepancyNumber}
+                </Link>{' '}
+                — {entry.sku}, {entry.variance > 0 ? '+' : ''}
+                {entry.variance}
+              </li>
+            ))}
+          </ul>
         </Card>
       ) : null}
 
@@ -174,6 +197,34 @@ export default async function WarehouseTaskPage({
         can(session.role, 'record:pickup') ? (
           <Card>
             <RecordPickupForm taskId={task.id} salesOrderId={task.order.id} />
+          </Card>
+        ) : null}
+
+        {task.status !== 'COMPLETED' &&
+        task.status !== 'CANCELLED' &&
+        can(session.role, 'report:inventory-discrepancy') ? (
+          <Card data-testid="report-discrepancy-panel">
+            <h2 className="mb-2 text-sm font-semibold text-ink">{t('exc.reportFromTask')}</h2>
+            <div className="space-y-4">
+              {task.items
+                .filter((item) => item.productId !== null)
+                .map((item) => (
+                  <div key={item.id} data-testid="report-line" data-sku={item.sku}>
+                    <div className="mb-1 text-sm">
+                      <span className="font-medium text-ink">{item.description}</span>{' '}
+                      <span className="font-mono text-xs text-ink-faint">{item.sku}</span>
+                      <span className="tabular ml-2 text-xs text-ink-muted">
+                        {t('exc.systemOnHand')} {item.onHand?.toLocaleString() ?? '—'}
+                      </span>
+                    </div>
+                    <ReportCountForm
+                      productId={item.productId!}
+                      warehouseTaskId={task.id}
+                      redirectTo={`/warehouse/${task.id}`}
+                    />
+                  </div>
+                ))}
+            </div>
           </Card>
         ) : null}
 
