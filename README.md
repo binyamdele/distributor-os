@@ -7,13 +7,12 @@ The narrow promise:
 > Turn customer inquiries into quotations, orders, follow-ups, payments and delivery handoffs
 > with dramatically less manual work.
 
-**Status: Phase 7 of 8 — fulfilment exceptions and returns.** Everything through delivery, plus
-the two ways it goes wrong: a physical count that disagrees with the system, and a delivery that
-left the yard and did not arrive. Reporting a count changes no stock; correcting it is somebody
-else's decision and is recorded in one ledger with the reason attached. A failed delivery can be
-retried, returned, or written off — and only the portion inspected as sellable ever goes back on
-the shelf. Nothing here refunds money or rewrites what a customer agreed to buy. See
-[what exists](#what-exists) for the honest split.
+**Status: Phase 8 of 8 — dashboard and daily brief.** The whole operating flow, plus the
+management layer over it: an owner dashboard, a unified Needs Attention queue with explainable
+priority rules, and a daily business brief. Every figure is calculated by the system in the
+organization's timezone; the AI, when one is configured, only turns those figures into
+sentences — and a narration that states a number the system did not calculate is discarded in
+favour of the deterministic brief. See [what exists](#what-exists) for the honest split.
 
 ---
 
@@ -115,6 +114,10 @@ see its customers or its gravel while signed in to Addis Build Supply, something
 | Delivery handoff with snapshotted destination | Route planning, maps, ETAs, driver accounts |
 | A collection path that creates no delivery | Proof-of-delivery signature or photograph |
 | Operational completion kept separate from payment | Customer notifications of any kind |
+| An owner dashboard with one definition per KPI | Forecasting, demand prediction, reorder advice |
+| A deterministic Needs Attention queue | Credit scoring or employee performance scoring |
+| A daily brief that works with no AI provider | P&L, COGS, gross margin, accounting statements |
+| AI narration fenced by schema and grounding checks | Emailed, scheduled or pushed reports |
 | Inventory discrepancies, reported and reconciled separately | Refunds, credit notes, payment reversal |
 | One movement ledger explaining every stock change | Backorders and replacement orders |
 | Delivery retry that touches no inventory | Automatic reship after restock |
@@ -209,6 +212,7 @@ Other documents:
 - [`docs/phase-5-payments-and-receivables.md`](docs/phase-5-payments-and-receivables.md) — the cash review gate, the extraction trust boundary, the confirmation fingerprint, evidence storage and access, and the receivables model
 - [`docs/phase-6-fulfillment-and-delivery.md`](docs/phase-6-fulfillment-and-delivery.md) — the warehouse task state machine, the exact stock consumption boundary, the delivery state machine, order completion, and why completion says nothing about money
 - [`docs/phase-7-fulfillment-exceptions-and-returns.md`](docs/phase-7-fulfillment-exceptions-and-returns.md) — the exception taxonomy, the discrepancy lifecycle, the reservation-shortfall policy, the movement ledger, retry and return semantics, and why none of it touches a confirmed payment
+- [`docs/phase-8-dashboard-and-daily-brief.md`](docs/phase-8-dashboard-and-daily-brief.md) — the metric definitions, the reporting timezone, the attention priority rules, the snapshot contract, the deterministic fallback brief, and the AI narration trust boundary
 - [`docs/future-roadmap.md`](docs/future-roadmap.md) — what is deliberately not built, and the seam left for it
 - [`docs/customer-discovery.md`](docs/customer-discovery.md) — interview guide
 - [`docs/validation-scorecard.md`](docs/validation-scorecard.md) — build / pivot / kill criteria

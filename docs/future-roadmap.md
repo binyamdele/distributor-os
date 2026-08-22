@@ -149,3 +149,24 @@ roadmap is to make deferral cheap, not to schedule the work.
 | Batch and lot tracking, serial numbers, expiry | Cement and rebar are fungible at this scale. Adding lots means every reservation, consumption and return becomes lot-specific | Movements already carry the reservation they came from |
 | Accounting entries and a general ledger | A whole product, and the narrow promise does not cover it | `inventory_movements` is the raw material a ledger would read, deliberately shaped as inventory history rather than as journal entries |
 | Procurement triggered by variance | Reordering on a shortage would act on a number nobody has confirmed yet | The reconciled variance is queryable per product |
+
+---
+
+## 8. Deferred by the Phase 8 assessment
+
+| Deferred | Why now is wrong | Seam left behind |
+|---|---|---|
+| Forecasting, demand prediction | Nothing in the data supports a prediction, and a confident forecast on a pilot's first quarter would be a fabrication with a chart around it | The seven-day series and the trend comparison are the honest inputs a forecast would need |
+| Reorder recommendations, automated purchasing | "Six products are below their threshold" is a fact; "order 10,000 bags" needs lead times, supplier prices and cash position the product does not hold | Low stock is already computed per product from the free-stock rule |
+| Supplier recommendations, procurement | No supplier exists in the model at all | — |
+| Credit scoring, customer risk ranking | Ranking customers by risk is a policy decision with a relationship on the other end. Phase 7 refused the same thing for reservation shortfalls | Receivables already carry days overdue and payment history per customer |
+| Employee performance scoring | The data would support it and the product should not. A quotation count is not a person's worth, and a dashboard that implied otherwise would change behaviour for the worse | Quotations already record who raised them |
+| AI business decisions, automatic follow-ups, automatic collection messages | Phase 8's whole contract is that the model narrates and never acts. An automatic message is an action with a customer at the far end | The narration seam takes figures and returns prose; it has no way to reach a record |
+| Historical dashboard and historical brief | Would need persisted snapshots, which is a second source of truth. Nobody has asked to read last Tuesday yet | `getDashboardSnapshot` already takes `asOf`, and `snapshotHash` already binds a narrative to its figures |
+| Accounting statements, P&L, COGS, gross margin | There is no cost basis anywhere in the product, so every one of these would be invented. Calling something "profit" without a cost is the most damaging number a dashboard could show | Order and payment values are exact; a cost field on the product is where this would start |
+| Tax filing and VAT returns | VAT is calculated per line and stored; a return is a regulatory artefact with a filing format and a deadline, and getting it wrong has legal consequences | `taxTotalMinor` is exact on every quotation and order |
+| PDF export, email or WhatsApp delivery of the brief | Delivery means scheduling, retries, addresses and an outbound channel — a phase of its own, and the brief is worth reading on the page first | The brief is a plain structure; a formatter for another medium reads the same object |
+| Scheduled jobs and push notifications | No scheduler exists in the product, and adding one to send a daily email would be building the infrastructure before the demand | The snapshot is a pure function of time and tenant |
+| Cross-company benchmarking | Would require sharing one distributor's figures with another. The tenancy model exists precisely to make that impossible | — |
+| Redis or a materialised cache | Measured at ~516 ms over 3,000 quotations, which is comfortable. A cache is a second source of truth and an invalidation problem, bought before there is a bill to pay | Every figure is one function in `definitions.ts` |
+| Reporting indexes | Trialled and measured as making no difference at pilot scale; the tenant index already carries the predicates. Adding them would cost write throughput on every order to buy nothing | The measurement test runs in CI, so the decision can be revisited against real data |
