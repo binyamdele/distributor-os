@@ -5,6 +5,7 @@ import type { ActorContext } from '@/platform/context';
 import { isUuid } from '@/platform/ids';
 import { type Result, fail, ok } from '@/platform/result';
 import { recordAudit } from '@/modules/audit';
+import { recordMovement } from '@/modules/inventory';
 import { allocateDocumentNumber } from '@/modules/numbering';
 import {
   type ConsumptionMismatch,
@@ -475,6 +476,52 @@ export async function completeWarehouseTask(
     );
   }
 
+  /*
+   * Phase 7. Lock this task's open discrepancies, then check them.
+   *
+   * Locked *before* the products, which keeps the module-wide ordering intact — discrepancy sits
+   * between delivery and products in the chain — and is what makes a handover racing a
+   * reconciliation serialise rather than interleave. Whichever arrives second sees what the
+   * first did.
+   *
+   * A reported count is an unresolved disagreement about how much is really there. Handing goods
+   * over while one stands would consume against a figure somebody has already said is wrong.
+   */
+  const blocking = await tx.$queryRaw<{ id: string }[]>`
+    SELECT id FROM inventory_discrepancies
+     WHERE warehouse_task_id = ${taskId}::uuid
+       AND organization_id = ${context.organizationId}::uuid
+       AND status IN ('OPEN', 'UNDER_REVIEW')
+     ORDER BY id
+     FOR UPDATE
+  `;
+
+  if (blocking.length > 0) {
+    const open = await tx.inventoryDiscrepancy.findMany({
+      where: { id: { in: blocking.map((row) => row.id) } },
+      include: { product: { select: { sku: true, name: true, unit: true } } },
+    });
+    const first = open[0]!;
+
+    return fail(
+      'CONFLICT',
+      `${first.discrepancyNumber} is open against ${first.product.name} (${first.product.sku}): ${first.systemOnHandQuantity} ${first.product.unit} recorded, ${first.physicalCountQuantity} counted. It has to be reconciled before these goods can leave.`,
+      {
+        discrepancies: open.map((row) => ({
+          id: row.id,
+          discrepancyNumber: row.discrepancyNumber,
+          sku: row.product.sku,
+          description: row.product.name,
+          unit: row.product.unit,
+          systemOnHand: row.systemOnHandQuantity,
+          physicalCount: row.physicalCountQuantity,
+          variance: row.varianceQuantity,
+        })),
+      },
+      true,
+    );
+  }
+
   for (const productId of productIds) {
     await tx.$executeRaw`
       SELECT id FROM products
@@ -564,6 +611,26 @@ export async function completeWarehouseTask(
     `;
 
     consumed.push({ productId, sku: product.sku, quantity });
+
+    /*
+     * Phase 7. The same event, in the ledger that explains stock.
+     *
+     * Added as history, not as a change of behaviour: the decrement above is Phase 6's and is
+     * untouched. Before this, a manual correction was recorded in one place and a shipment in
+     * another, so no single query could answer "why did Rebar 12mm decrease by 40".
+     */
+    await recordMovement(tx, context, {
+      productId,
+      movementType: 'FULFILLMENT_CONSUMPTION',
+      delta: -quantity,
+      stockAfter: product.availableStock - quantity,
+      reason: `${task.taskNumber}: handed over against ${order.orderNumber}`,
+      relatedOrderId: order.id,
+      relatedReservationId:
+        reservations.find(
+          (reservation) => reservation.productId === productId && reservation.status === 'ACTIVE',
+        )?.id ?? null,
+    });
 
     // The one audit event a stock dispute will be settled from. Structured, with both figures
     // before and after, and tied to the order and the reservations that justified it.

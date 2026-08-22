@@ -546,6 +546,18 @@ export interface OrderView {
   /// Phase 6. Operational completion, which says nothing about money.
   readonly completedAt: Date | null;
   readonly pickedUpAt: Date | null;
+  /**
+   * Phase 7. An operational problem the order is carrying — a stock shortfall, a failed or lost
+   * delivery, goods that came back. Deliberately not a status value: an order with a shortfall
+   * is still open, and one whose goods were lost is neither finished nor cancelled.
+   */
+  readonly operationalException:
+    | 'STOCK_SHORTFALL'
+    | 'DELIVERY_FAILED'
+    | 'DELIVERY_LOST'
+    | 'GOODS_RETURNED'
+    | null;
+  readonly operationalExceptionNote: string | null;
   readonly createdAt: Date;
   readonly reservations: readonly {
     id: string;
@@ -612,6 +624,8 @@ export async function getOrder(
     cancellationReason: order.cancellationReason,
     completedAt: order.completedAt,
     pickedUpAt: order.pickedUpAt,
+    operationalException: order.operationalException as OrderView['operationalException'],
+    operationalExceptionNote: order.operationalExceptionNote,
     createdAt: order.createdAt,
     reservations: order.reservations.map((reservation) => ({
       id: reservation.id,

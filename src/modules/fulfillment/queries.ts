@@ -90,6 +90,7 @@ export async function warehouseQueue(
 
 export interface WarehouseTaskItemView {
   readonly id: string;
+  readonly productId: string | null;
   readonly sku: string;
   readonly description: string;
   readonly unit: string;
@@ -155,6 +156,7 @@ export async function getWarehouseTask(
 
   const items = task.items.map((item) => ({
     id: item.id,
+    productId: item.productId,
     sku: item.skuSnapshot,
     description: item.descriptionSnapshot,
     unit: item.unitSnapshot,

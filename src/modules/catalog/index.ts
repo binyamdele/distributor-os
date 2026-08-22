@@ -5,6 +5,7 @@ import type { ActorContext } from '@/platform/context';
 import { type Result, fail, ok } from '@/platform/result';
 import { parseDecimal, toDecimalString } from '@/platform/money';
 import { recordAudit } from '@/modules/audit';
+import { recordMovement } from '@/modules/inventory';
 import { normalizeAlias, parseAliasList } from './normalize';
 import { type MatchOutcome, type MatchableProduct, matchProduct } from './matching';
 
@@ -233,15 +234,19 @@ export async function adjustStock(
 
   const stockAfter = Number(updated.available_stock);
 
-  await tx.stockAdjustment.create({
-    data: {
-      organizationId: context.organizationId,
-      productId,
-      delta,
-      stockAfter,
-      reason,
-      actorId: context.userId,
-    },
+  /*
+   * Phase 7. The same row, in the renamed and widened ledger.
+   *
+   * This *is* Phase 1's stock_adjustments table — renamed to inventory_movements and given a
+   * type column, because a manual correction and a shipment are both reasons stock changed and
+   * belong in one history. The behaviour here is unchanged; only where the row lands is.
+   */
+  await recordMovement(tx, context, {
+    productId,
+    movementType: 'MANUAL_ADJUSTMENT',
+    delta,
+    stockAfter,
+    reason,
   });
 
   await recordAudit(tx, context, {
@@ -269,7 +274,9 @@ export async function stockHistory(
   productId: string,
   limit = 25,
 ): Promise<StockAdjustmentRecord[]> {
-  return tx.stockAdjustment.findMany({
+  // Phase 7: the same rows, from the renamed ledger. It now also carries fulfilment consumption
+  // and returns, so a product's stock history is the whole story rather than the manual half.
+  return tx.inventoryMovement.findMany({
     where: { productId },
     orderBy: { createdAt: 'desc' },
     take: limit,
