@@ -104,6 +104,31 @@ const config = [
       eqeqeq: ['error', 'always'],
     },
   },
+
+  /*
+   * Application code logs through @/platform/observability, never through console.
+   *
+   * Not a style preference. The logger redacts credentials, tokens, payment evidence and raw
+   * customer messages, and attaches the correlation id that makes a support call answerable. A
+   * bare console.log does none of that, and the one that eventually prints a bank slip into a
+   * log aggregator will have looked entirely reasonable when it was written.
+   */
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      // The logger disables this on the one line that is allowed to write output, so the
+      // exception is visible where it is taken rather than hidden in a config ignore list.
+      'no-console': 'error',
+    },
+  },
+
+  /* CLI scripts and the seed talk to an operator at a terminal. That is what console is for. */
+  {
+    files: ['scripts/**/*.ts', 'prisma/**/*.ts'],
+    rules: {
+      'no-console': 'off',
+    },
+  },
 ];
 
 export default config;

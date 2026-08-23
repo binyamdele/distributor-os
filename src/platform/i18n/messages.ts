@@ -25,6 +25,8 @@ export const en = {
   'auth.email': 'Email',
   'auth.password': 'Password',
   'auth.signingIn': 'Signing in…',
+  'auth.tooManyAttempts':
+    'Too many sign-in attempts. Wait a few minutes and try again.',
   'auth.invalidCredentials': 'That email and password do not match an account.',
   'auth.noMembership': 'This account is not a member of any organization.',
   'auth.inactive': 'This account has been deactivated.',
