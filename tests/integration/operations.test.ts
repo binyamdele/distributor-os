@@ -84,6 +84,9 @@ describe('readiness', () => {
       async delete() {
         throw new Error('bucket unreachable');
       },
+      async health() {
+        return { reachable: false, detail: 'unreachable' as const };
+      },
     });
 
     try {

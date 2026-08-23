@@ -41,6 +41,22 @@ export interface PutInput {
   readonly organizationId: string;
 }
 
+/**
+ * Whether the store itself is reachable, as distinct from whether an object exists.
+ *
+ * The distinction only became load-bearing with a remote store. On local disk "I cannot find
+ * that file" and "I cannot reach the disk" are nearly the same event. Against S3 they are
+ * completely different: a 404 means the bucket is healthy and the object is not there, while a
+ * 403 means the credentials are wrong and a timeout means the network is. Probing for a
+ * nonexistent key and treating any failure as unhealthy would have reported a perfectly good
+ * bucket as broken, so the store is asked directly.
+ */
+export interface StoreHealth {
+  readonly reachable: boolean;
+  /** Safe to surface on a health endpoint: a category, never a message, host or credential. */
+  readonly detail?: 'unreachable' | 'unauthorized' | 'missing-bucket' | 'timeout';
+}
+
 export interface FileStore {
   readonly name: string;
   put(input: PutInput): Promise<StoredFile>;
@@ -49,4 +65,6 @@ export interface FileStore {
   read(key: string): Promise<Uint8Array | null>;
   /** Only for a retention policy. Not called anywhere in Phase 5. */
   delete(key: string): Promise<void>;
+  /** Can this store be reached and used at all? Never confused with "does this object exist". */
+  health(): Promise<StoreHealth>;
 }

@@ -2,7 +2,7 @@ import 'server-only';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { FileMetadata, FileStore, PutInput, StoredFile } from './types';
+import type { FileMetadata, FileStore, PutInput, StoreHealth, StoredFile } from './types';
 
 /**
  * Local-disk store for development and for the pilot.
@@ -74,5 +74,20 @@ export class LocalFileStore implements FileStore {
 
   async delete(key: string): Promise<void> {
     await rm(this.resolve(key), { force: true });
+  }
+
+  /**
+   * Can the root directory be written to?
+   *
+   * Checked by creating it, which is idempotent and is exactly what `put` will need to do. A
+   * read-only mount or a full disk fails here rather than on the first upload.
+   */
+  async health(): Promise<StoreHealth> {
+    try {
+      await mkdir(this.rootDir, { recursive: true });
+      return { reachable: true };
+    } catch {
+      return { reachable: false, detail: 'unreachable' };
+    }
   }
 }

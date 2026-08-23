@@ -47,6 +47,10 @@ export class MemoryFileStore implements FileStore {
   async delete(key: string): Promise<void> {
     this.objects.delete(key);
   }
+
+  async health(): Promise<{ reachable: boolean }> {
+    return { reachable: true };
+  }
 }
 
 export function useMemoryFileStore(): MemoryFileStore {

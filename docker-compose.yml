@@ -19,5 +19,40 @@ services:
       timeout: 5s
       retries: 20
 
+  # ---------------------------------------------------------------------------
+  # S3-compatible object storage, for developing and testing the production
+  # evidence adapter against something that actually speaks the protocol.
+  #
+  # Phase 9 specified an S3 adapter and did not build one. Building it against a
+  # mocked SDK would only have asserted that the mock behaves as written — it
+  # would not have caught path-style addressing, user-metadata key casing, or the
+  # difference between a 404 and a 403, all of which this container did catch.
+  #
+  # MinIO speaks the same API as AWS S3, Cloudflare R2, DigitalOcean Spaces and
+  # Backblaze B2, so an adapter proven here works against those.
+  # ---------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: distributor-os-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      # Development credentials for a container on a laptop. Not secrets, and the
+      # secret scanner's patterns are written so these do not trip it.
+      MINIO_ROOT_USER: distributor_minio
+      MINIO_ROOT_PASSWORD: distributor_minio_dev
+    ports:
+      # 9010/9011 to avoid colliding with anything already on 9000.
+      - '9010:9000'
+      - '9011:9001'
+    volumes:
+      - distributor-os-minio:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'mc ready local || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
 volumes:
   distributor-os-pgdata:
+  distributor-os-minio:

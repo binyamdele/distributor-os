@@ -91,26 +91,44 @@ export async function checkReadiness(): Promise<ReadinessReport> {
 
     timed('file-store', async () => {
       /*
-       * Reading metadata for a key that does not exist. It proves the store is reachable and
-       * answering without writing anything, and without needing a known object to exist.
+       * The store's own health probe, not a lookup for a key that does not exist.
        *
-       * Degraded rather than failed: evidence upload and retrieval stop working, and quotations,
-       * orders, warehouse and delivery all continue. Taking the whole application out of
-       * rotation because a bucket is unreachable would be a larger outage than the one being
-       * reported.
+       * The earlier version asked `getMetadata` for a fabricated key and treated any thrown
+       * error as unhealthy. On local disk that was nearly right. Against S3 it is wrong in both
+       * directions: a missing object returns null rather than throwing, so a bucket with bad
+       * credentials would still have looked fine, while a provider that answers 403 for a
+       * missing key would have looked broken when it was not. `health()` asks the question
+       * directly — can this store be reached and used — and answers with a category rather than
+       * a message.
        */
-      const store = fileStore();
-      await store.getMetadata(`__healthcheck__/${settings.APP_ENV}`);
-      return { status: 'ok' as const };
-    }).then((check) =>
-      check.status === 'failed'
-        ? { ...check, status: 'degraded' as const, detail: 'evidence storage unreachable' }
-        : check,
-    ),
+      const health = await fileStore().health();
+      if (health.reachable) return { status: 'ok' as const };
+      return { status: 'degraded' as const, detail: health.detail ?? 'unreachable' };
+    }),
   ]);
 
-  // Only a hard failure blocks readiness. A degraded check is reported and served through.
-  return { ready: checks.every((check) => check.status !== 'failed'), checks };
+  /*
+   * A degraded evidence store is reported and served through — for every environment except a
+   * production one that requires it.
+   *
+   * Phase 9 reasoned that quotations, orders, warehouse and delivery all keep working when a
+   * bucket is unreachable, so taking the whole application out of rotation would be a larger
+   * outage than the real one. That still holds. What it missed is that a production deployment
+   * configured for S3 has *declared* evidence storage to be a required dependency: payments
+   * cannot be submitted or reviewed without it, which is half the product, and reporting READY
+   * in that state would tell a load balancer to keep sending traffic that cannot be served.
+   *
+   * So the rule is: degraded is tolerable unless the deployment says the store is required.
+   */
+  const storeRequired = settings.APP_ENV === 'production' && settings.FILE_STORAGE_DRIVER === 's3';
+
+  const blocked = checks.some(
+    (check) =>
+      check.status === 'failed' ||
+      (storeRequired && check.name === 'file-store' && check.status === 'degraded'),
+  );
+
+  return { ready: !blocked, checks };
 }
 
 export interface BuildInfo {

@@ -88,6 +88,16 @@ const schema = z
     S3_ENDPOINT: z.string().url().optional(),
     S3_ACCESS_KEY_ID: z.string().optional(),
     S3_SECRET_ACCESS_KEY: z.string().optional(),
+    /**
+     * Address the bucket as a path segment rather than a subdomain.
+     *
+     * Required by MinIO and most self-hosted gateways, whose virtual-host addressing would need
+     * wildcard DNS they do not have. AWS and R2 prefer the default.
+     */
+    S3_FORCE_PATH_STYLE: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
 
     /** Where unhandled server exceptions are reported. Absent means log-only. */
     ERROR_REPORTING_DSN: z.string().optional(),
