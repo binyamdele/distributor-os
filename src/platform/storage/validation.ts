@@ -28,11 +28,7 @@ const EXTENSIONS: Readonly<Record<AllowedMimeType, readonly string[]>> = {
 };
 
 export type UploadProblem =
-  | 'EMPTY'
-  | 'TOO_LARGE'
-  | 'UNSUPPORTED_TYPE'
-  | 'CONTENT_MISMATCH'
-  | 'EXTENSION_MISMATCH';
+  'EMPTY' | 'TOO_LARGE' | 'UNSUPPORTED_TYPE' | 'CONTENT_MISMATCH' | 'EXTENSION_MISMATCH';
 
 export interface UploadVerdict {
   readonly ok: boolean;

@@ -79,7 +79,9 @@ ENV HOSTNAME=0.0.0.0
 # Next's standalone output: the server plus only the dependencies it actually reached for.
 COPY --from=build --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=build --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --from=build --chown=nextjs:nodejs /app/public ./public
+# No `public/` copy: this project has no static asset directory, and Phase 9 shipped a
+# Dockerfile that assumed one. It had never been built — the first `docker build` failed on
+# exactly this line. Next only emits `public/` into the standalone output when it exists.
 
 # Migrations and the Prisma schema travel with the image, so the deploy runs exactly the
 # migrations that were built and tested together with the code — not whatever is on a branch.

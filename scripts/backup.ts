@@ -21,6 +21,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config as loadEnv } from 'dotenv';
+import { notify } from './notify';
 
 loadEnv();
 
@@ -44,9 +45,48 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-function fail(message: string): never {
+/**
+ * Refuses, and tells somebody.
+ *
+ * The whole point of the alerting blocker: a backup that fails and is recorded only in a cron log
+ * nobody opens has not failed loudly enough. Every exit path from this script that means "no
+ * backup was taken" goes through here.
+ *
+ * The alert is awaited before exiting, because a process that exits with a fetch in flight
+ * cancels it — which would mean the one alert that mattered was the one that never arrived.
+ */
+async function fail(message: string): Promise<never> {
   console.error(`\n${message}\n`);
+
+  const results = await notify({
+    severity: 'critical',
+    title: 'Database backup FAILED',
+    detail: message.split('\n')[0],
+    environment: process.env.APP_ENV ?? 'development',
+    at: new Date().toISOString(),
+  });
+
+  for (const result of results) {
+    console.error(`  alert ${result.delivered ? 'delivered' : 'FAILED'}: ${result.destination}`);
+  }
+
   process.exit(1);
+}
+
+/**
+ * The owner's connection, or an alert and an exit.
+ *
+ * A helper rather than an inline check because `fail` is now async, and TypeScript cannot narrow
+ * a variable through an awaited `Promise<never>` — it does not know the process is gone by then.
+ * Returning the string from here keeps the type honest without a cast that would hide the
+ * assumption.
+ */
+async function requireDirectUrl(): Promise<string> {
+  const url = process.env.DIRECT_URL;
+  if (url) return url;
+
+  await fail('DIRECT_URL must be set. A backup must be taken as the database owner.');
+  throw new Error('unreachable');
 }
 
 /** A filesystem-safe timestamp. Sorts chronologically, which is what a restore needs. */
@@ -65,8 +105,7 @@ async function main() {
   // The owner's connection: pg_dump needs to read every table, including ones RLS would hide
   // from the application role. A backup taken as `distributor_app` would silently contain no
   // rows at all — RLS is FORCEd, so even the table owner is subject to it.
-  const url = process.env.DIRECT_URL;
-  if (!url) fail('DIRECT_URL must be set. A backup must be taken as the database owner.');
+  const url = await requireDirectUrl();
 
   /*
    * Prisma-specific query parameters are stripped before libpq sees the string.
@@ -138,7 +177,7 @@ async function main() {
       { encoding: 'buffer', maxBuffer: 1024 * 1024 * 1024 },
     );
     if (result.status !== 0) {
-      fail(`pg_dump failed:\n${result.stderr?.toString() ?? '(no output)'}`);
+      await fail(`pg_dump failed:\n${result.stderr?.toString() ?? '(no output)'}`);
     }
     dumped = result.stdout;
   } else {
@@ -147,7 +186,7 @@ async function main() {
       maxBuffer: 1024 * 1024 * 1024,
     });
     if (result.status !== 0) {
-      fail(
+      await fail(
         `pg_dump failed:\n${result.stderr?.toString() ?? '(no output)'}\n\n` +
           'If pg_dump is not installed locally, pass --container <name> to run it inside the\n' +
           'Postgres container instead.',
@@ -156,7 +195,7 @@ async function main() {
     dumped = result.stdout;
   }
 
-  if (dumped.length === 0) fail('pg_dump produced an empty file. Refusing to record it.');
+  if (dumped.length === 0) await fail('pg_dump produced an empty file. Refusing to record it.');
 
   writeFileSync(target, dumped);
 

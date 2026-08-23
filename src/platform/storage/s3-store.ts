@@ -174,9 +174,7 @@ export class S3FileStore implements FileStore {
     if (!this.isWellFormed(key)) return null;
 
     try {
-      const head = await this.client.send(
-        new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
-      );
+      const head = await this.client.send(new HeadObjectCommand({ Bucket: this.bucket, Key: key }));
 
       const stored = head.Metadata?.[HASH_METADATA_KEY];
 
