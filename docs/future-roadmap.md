@@ -170,3 +170,21 @@ roadmap is to make deferral cheap, not to schedule the work.
 | Cross-company benchmarking | Would require sharing one distributor's figures with another. The tenancy model exists precisely to make that impossible | — |
 | Redis or a materialised cache | Measured at ~516 ms over 3,000 quotations, which is comfortable. A cache is a second source of truth and an invalidation problem, bought before there is a bill to pay | Every figure is one function in `definitions.ts` |
 | Reporting indexes | Trialled and measured as making no difference at pilot scale; the tenant index already carries the predicates. Adding them would cost write throughput on every order to buy nothing | The measurement test runs in CI, so the decision can be revisited against real data |
+
+---
+
+## 9. Deferred by the Phase 9 assessment
+
+| Deferred | Why now is wrong | Seam left behind |
+|---|---|---|
+| S3 storage adapter implementation | **This is a launch blocker, not a nicety.** The `FileStore` interface and the production guard refusing local storage both exist; the adapter does not, and payment evidence cannot be stored in production without it | `FileStore` has four methods and deliberately no URL method; `FILE_STORAGE_DRIVER=s3` is already validated |
+| Point-in-time recovery | WAL archiving is a managed-provider feature, not repository code. The recovery point today is the last nightly dump | The backup and restore scripts are provider-agnostic |
+| Reformatting Phases 1–8 with Prettier | ~140 files predate the check ever being run. A whole-codebase reformat days before a pilot is a large unreviewable diff that would hide any real change inside it | Prettier is configured; Phase 9 files are already clean; it is one `--write` and one commit whenever there is no pilot pending |
+| Dependency major upgrades | 11 advisories, every one in build or test tooling and none reachable from the production container. Resolving them needs major bumps of Next, Prisma and Vitest | The full suite is the safety net for doing it deliberately after the pilot |
+| Independent penetration test | Cost and timing. The self-review is documented and is a weaker thing than a test by somebody else | `docs/phase-9-security-review.md` is the starting brief for one |
+| Distributed rate limiting | One container. In-process counters are correct for this deployment and a Redis dependency would be a new thing to operate, monitor and restore | `consume()` is one function behind one call site per limit |
+| A real error-reporting provider | A structured error line with a correlation id is workable for one pilot, and honest about what it is | `ErrorReporter` is an interface with two implementations already |
+| Automated retention and erasure | Deleting business records is irreversible and the right window is the distributor's decision with their accountant, not a default this repository picks | Retention classes are documented; anonymisation rather than deletion is the stated design |
+| MFA | Adds enrolment and recovery flows a five-person pilot does not need | Sessions and password hashing are already separate concerns |
+| Multi-instance deployment | One distributor. Horizontal scale would need distributed rate limiting and a shared session story, both of which are guesses until there is load to point at | Nothing in the design assumes a single instance except the rate limiter, which says so |
+| An import UI | Import runs once per distributor, during onboarding, by whoever sets the system up. A week of upload UI to make a one-time operation slightly more comfortable — and a file-upload path in front of every user for no ongoing benefit | The module is UI-agnostic: preview and commit are two function calls |

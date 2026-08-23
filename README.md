@@ -7,12 +7,13 @@ The narrow promise:
 > Turn customer inquiries into quotations, orders, follow-ups, payments and delivery handoffs
 > with dramatically less manual work.
 
-**Status: Phase 8 of 8 — dashboard and daily brief.** The whole operating flow, plus the
-management layer over it: an owner dashboard, a unified Needs Attention queue with explainable
-priority rules, and a daily business brief. Every figure is calculated by the system in the
-organization's timezone; the AI, when one is configured, only turns those figures into
-sentences — and a narration that states a number the system did not calculate is discarded in
-favour of the deterministic brief. See [what exists](#what-exists) for the honest split.
+**Status: Phase 9 — operationally ready, not yet deployed.** The eight development phases are
+complete and the ninth made the system deployable: schema-validated configuration that refuses
+unsafe production settings, an admin CLI and CSV import for onboarding a real distributor, health
+and version endpoints, structured logging with request correlation, rate limiting, a CI pipeline,
+a container image, and — most importantly — a backup whose restore has actually been rehearsed
+and verified. It has **not** been deployed, and the object-storage adapter is still to be
+written. See [pilot readiness](docs/pilot-readiness.md) for the honest position.
 
 ---
 
@@ -213,6 +214,12 @@ Other documents:
 - [`docs/phase-6-fulfillment-and-delivery.md`](docs/phase-6-fulfillment-and-delivery.md) — the warehouse task state machine, the exact stock consumption boundary, the delivery state machine, order completion, and why completion says nothing about money
 - [`docs/phase-7-fulfillment-exceptions-and-returns.md`](docs/phase-7-fulfillment-exceptions-and-returns.md) — the exception taxonomy, the discrepancy lifecycle, the reservation-shortfall policy, the movement ledger, retry and return semantics, and why none of it touches a confirmed payment
 - [`docs/phase-8-dashboard-and-daily-brief.md`](docs/phase-8-dashboard-and-daily-brief.md) — the metric definitions, the reporting timezone, the attention priority rules, the snapshot contract, the deterministic fallback brief, and the AI narration trust boundary
+- [`docs/pilot-readiness.md`](docs/pilot-readiness.md) — where this actually stands for one real distributor, with the remaining blockers
+- [`docs/phase-9-operational-baseline.md`](docs/phase-9-operational-baseline.md) — what was production-capable, what assumed a laptop, and the scope that followed
+- [`docs/deployment-runbook.md`](docs/deployment-runbook.md), [`docs/migration-runbook.md`](docs/migration-runbook.md), [`docs/backup-and-restore-runbook.md`](docs/backup-and-restore-runbook.md) — the operational procedures, written for somebody who did not build this
+- [`docs/secrets-and-environment.md`](docs/secrets-and-environment.md), [`docs/operational-alerts.md`](docs/operational-alerts.md), [`docs/data-retention-and-privacy.md`](docs/data-retention-and-privacy.md)
+- [`docs/phase-9-security-review.md`](docs/phase-9-security-review.md) — a documented self-review, and honest that it is not a penetration test
+- [`docs/pilot-onboarding.md`](docs/pilot-onboarding.md) and the four role guides
 - [`docs/future-roadmap.md`](docs/future-roadmap.md) — what is deliberately not built, and the seam left for it
 - [`docs/customer-discovery.md`](docs/customer-discovery.md) — interview guide
 - [`docs/validation-scorecard.md`](docs/validation-scorecard.md) — build / pivot / kill criteria
