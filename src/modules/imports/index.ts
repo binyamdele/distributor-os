@@ -54,6 +54,45 @@ export interface ImportPreview<T> {
   readonly alreadyImportedAt: Date | null;
 }
 
+/**
+ * Records that a file was imported.
+ *
+ * Always an insert. The row is append-only — UPDATE and DELETE are revoked from the application
+ * role — because an import record is the evidence that a file was loaded, and evidence that can
+ * be rewritten is not evidence. A deliberate re-import therefore appends a second row, and the
+ * history reads "imported on the 1st, imported again on the 5th" rather than one mutated row
+ * claiming only the later import ever happened.
+ *
+ * The duplicate warning looks for the *earliest* matching row, so it keeps answering the
+ * question an operator is actually asking: when did this file first arrive here.
+ */
+async function recordImportJob(
+  tx: TenantTransaction,
+  context: ActorContext,
+  input: {
+    kind: ImportPreview<unknown>['kind'];
+    fingerprint: string;
+    filename?: string;
+    rowCount: number;
+    created: number;
+    updated: number;
+  },
+): Promise<string> {
+  const job = await tx.importJob.create({
+    data: {
+      organizationId: context.organizationId,
+      kind: input.kind,
+      fingerprint: input.fingerprint,
+      filename: input.filename ?? null,
+      rowCount: input.rowCount,
+      createdCount: input.created,
+      updatedCount: input.updated,
+      importedById: context.userId,
+    },
+  });
+  return job.id;
+}
+
 async function priorImport(
   tx: TenantTransaction,
   kind: ImportPreview<unknown>['kind'],
@@ -61,6 +100,9 @@ async function priorImport(
 ): Promise<Date | null> {
   const existing = await tx.importJob.findFirst({
     where: { kind, fingerprint },
+    // Earliest, so a repeat import keeps reporting when the file first arrived rather than
+    // when it was last re-applied.
+    orderBy: { createdAt: 'asc' },
     select: { createdAt: true },
   });
   return existing?.createdAt ?? null;
@@ -168,27 +210,23 @@ export async function commitCustomers(
     }
   }
 
-  const job = await tx.importJob.create({
-    data: {
-      organizationId: context.organizationId,
-      kind: 'CUSTOMERS',
-      fingerprint: preview.value.fingerprint,
-      filename: options.filename ?? null,
-      rowCount: preview.value.rows.length,
-      createdCount: created,
-      updatedCount: updated,
-      importedById: context.userId,
-    },
+  const jobId = await recordImportJob(tx, context, {
+    kind: 'CUSTOMERS',
+    fingerprint: preview.value.fingerprint,
+    filename: options.filename,
+    rowCount: preview.value.rows.length,
+    created,
+    updated,
   });
 
   await recordAudit(tx, context, {
     action: 'import.customers',
     entityType: 'import_job',
-    entityId: job.id,
+    entityId: jobId,
     newState: { rows: preview.value.rows.length, created, updated, filename: options.filename },
   });
 
-  return ok({ created, updated, jobId: job.id });
+  return ok({ created, updated, jobId });
 }
 
 // ---------------------------------------------------------------------------
@@ -300,27 +338,23 @@ export async function commitProducts(
     }
   }
 
-  const job = await tx.importJob.create({
-    data: {
-      organizationId: context.organizationId,
-      kind: 'PRODUCTS',
-      fingerprint: preview.value.fingerprint,
-      filename: options.filename ?? null,
-      rowCount: preview.value.rows.length,
-      createdCount: created,
-      updatedCount: updated,
-      importedById: context.userId,
-    },
+  const jobId = await recordImportJob(tx, context, {
+    kind: 'PRODUCTS',
+    fingerprint: preview.value.fingerprint,
+    filename: options.filename,
+    rowCount: preview.value.rows.length,
+    created,
+    updated,
   });
 
   await recordAudit(tx, context, {
     action: 'import.products',
     entityType: 'import_job',
-    entityId: job.id,
+    entityId: jobId,
     newState: { rows: preview.value.rows.length, created, updated, filename: options.filename },
   });
 
-  return ok({ created, updated, jobId: job.id });
+  return ok({ created, updated, jobId });
 }
 
 // ---------------------------------------------------------------------------
@@ -430,10 +464,14 @@ export async function commitOpeningStock(
   const preview = await previewOpeningStock(tx, content);
   if (!preview.ok) return preview;
 
-  if (!preview.value.canCommit) {
-    return fail('VALIDATION_FAILED', preview.value.blockedReason ?? 'This file cannot be imported.');
-  }
-
+  /*
+   * The duplicate check comes before the general validity check, unlike the other two importers.
+   *
+   * A second attempt at the same stock file fails both: the file was already imported, *and*
+   * every product in it now holds stock. Reporting the second would tell the operator the
+   * consequence and leave them wondering how the yard filled up; reporting the first tells them
+   * what they actually did.
+   */
   if (preview.value.alreadyImportedAt) {
     return fail(
       'CONFLICT',
@@ -442,6 +480,10 @@ export async function commitOpeningStock(
       { alreadyImportedAt: preview.value.alreadyImportedAt },
       true,
     );
+  }
+
+  if (!preview.value.canCommit) {
+    return fail('VALIDATION_FAILED', preview.value.blockedReason ?? 'This file cannot be imported.');
   }
 
   const products = await tx.product.findMany({ select: { id: true, sku: true } });
@@ -493,23 +535,19 @@ export async function commitOpeningStock(
     created += 1;
   }
 
-  const job = await tx.importJob.create({
-    data: {
-      organizationId: context.organizationId,
-      kind: 'OPENING_STOCK',
-      fingerprint: preview.value.fingerprint,
-      filename: options.filename ?? null,
-      rowCount: preview.value.rows.length,
-      createdCount: created,
-      updatedCount: 0,
-      importedById: context.userId,
-    },
+  const jobId = await recordImportJob(tx, context, {
+    kind: 'OPENING_STOCK',
+    fingerprint: preview.value.fingerprint,
+    filename: options.filename,
+    rowCount: preview.value.rows.length,
+    created,
+    updated: 0,
   });
 
   await recordAudit(tx, context, {
     action: 'import.opening_stock',
     entityType: 'import_job',
-    entityId: job.id,
+    entityId: jobId,
     newState: {
       rows: preview.value.rows.length,
       products: created,
@@ -518,5 +556,5 @@ export async function commitOpeningStock(
     },
   });
 
-  return ok({ created, updated: 0, jobId: job.id });
+  return ok({ created, updated: 0, jobId });
 }

@@ -1682,7 +1682,13 @@ model ImportJob {
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
-  @@unique([organizationId, kind, fingerprint])
+  /// Not unique, deliberately.
+  ///
+  /// The row is append-only — UPDATE and DELETE are revoked from the application role, because
+  /// an import record is evidence that a file was loaded and evidence that can be rewritten is
+  /// not evidence. A unique key would contradict that: a deliberate re-import could then neither
+  /// insert nor update. So a repeat appends, and the history says so.
+  @@index([organizationId, kind, fingerprint])
   @@index([organizationId])
   @@map("import_jobs")
 }

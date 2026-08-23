@@ -1,0 +1,211 @@
+# The gate. Nothing deploys that has not passed this.
+#
+# Ordered cheapest-first, so a typo fails in ninety seconds rather than after the integration
+# suite has spent eight minutes proving the same thing. Everything runs on every push regardless,
+# because a green typecheck with a red integration suite is not information anybody wants
+# delivered one job at a time.
+#
+# The migration replay is here rather than only in the deploy runbook on purpose. It is the one
+# check that proves a *fresh* database ends up correctly configured — which is the state a real
+# distributor's system starts in, and the one the development database can never be in again.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A newer push supersedes an older one on the same branch. Nobody needs the results of a commit
+  # that has already been replaced.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Matches docker/init-test-db.sql, so the roles and grants are the ones the app expects.
+  POSTGRES_USER: distributor
+  POSTGRES_PASSWORD: distributor
+  POSTGRES_DB: distributor_os
+
+jobs:
+  static:
+    name: Typecheck, lint, format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # --frozen-lockfile: CI fails rather than silently resolving a different dependency tree
+      # than the one a developer tested against.
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm prisma generate
+
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm format:check
+
+      # A secret pasted into a source file or a doc would be invisible to every other check here.
+      - name: Scan for secrets
+        run: pnpm ops:scan-secrets
+
+  test:
+    name: Unit and integration tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: distributor
+          POSTGRES_PASSWORD: distributor
+          POSTGRES_DB: distributor_os
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U distributor"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql://distributor_app:distributor_app@localhost:5434/distributor_os?schema=public
+      DIRECT_URL: postgresql://distributor:distributor@localhost:5434/distributor_os?schema=public
+      TEST_DATABASE_URL: postgresql://distributor_app:distributor_app@localhost:5434/distributor_os_test?schema=public
+      TEST_DIRECT_URL: postgresql://distributor:distributor@localhost:5434/distributor_os_test?schema=public
+      # A generated value would be more realistic and would make a failure irreproducible.
+      SESSION_SECRET: ci-only-session-secret-not-used-anywhere-else-0123456789
+      AI_PROVIDER: mock
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The service container starts with only the superuser. The application role, the test
+      # database and the default privileges all come from the same script the local compose file
+      # uses, so CI exercises the real two-role setup rather than running everything as owner —
+      # which would make every RLS test pass for the wrong reason.
+      - name: Provision roles and the test database
+        run: |
+          PGPASSWORD=distributor psql -h localhost -p 5434 -U distributor -d distributor_os \
+            -f docker/init-test-db.sql
+
+      - run: pnpm prisma generate
+      - run: pnpm prisma migrate deploy
+
+      - name: Migrate the test database
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+          DIRECT_URL: ${{ env.TEST_DIRECT_URL }}
+        run: pnpm prisma migrate deploy
+
+      - run: pnpm test
+
+  build:
+    name: Production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm prisma generate
+
+      # Built as staging: the production guards would refuse a build environment with no real
+      # secret or bucket, and a build needs to compile pages rather than be a valid deployment.
+      # The real settings are validated at runtime, which is where they matter.
+      - name: Build
+        env:
+          APP_ENV: staging
+          NODE_ENV: production
+          APP_URL: https://build.invalid
+          DATABASE_URL: postgresql://build:build@localhost:5432/build
+          SESSION_SECRET: ci-build-placeholder-not-used-at-runtime-0123456789
+          BUILD_SHA: ${{ github.sha }}
+        run: pnpm build
+
+  migration-replay:
+    name: Migration replay on an empty database
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: distributor
+          POSTGRES_PASSWORD: distributor
+          POSTGRES_DB: distributor_os
+        ports:
+          - 5434:5432
+        options: >-
+          --health-cmd "pg_isready -U distributor"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql://distributor_app:distributor_app@localhost:5434/distributor_os?schema=public
+      DIRECT_URL: postgresql://distributor:distributor@localhost:5434/distributor_os?schema=public
+      SESSION_SECRET: ci-only-session-secret-not-used-anywhere-else-0123456789
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Provision roles
+        run: |
+          PGPASSWORD=distributor psql -h localhost -p 5434 -U distributor -d distributor_os \
+            -f docker/init-test-db.sql
+
+      - run: pnpm prisma generate
+
+      # Applies every migration to an empty database and then checks what migrations alone
+      # cannot express: RLS forced on every tenant table, the application role neither superuser
+      # nor BYPASSRLS, the append-only grants revoked, and the immutability triggers present.
+      # Without this, "RLS is enforced" would be a property of how one container was provisioned.
+      - name: Replay and verify
+        run: pnpm ops:verify-migrations --container ${{ job.services.postgres.id }}

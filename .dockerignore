@@ -1,0 +1,15 @@
+# Everything the image does not need, and several things it must never contain.
+node_modules
+.next
+.git
+.env
+.env.*
+!.env.example
+backups
+storage
+test-results
+playwright-report
+blob-report
+coverage
+*.tsbuildinfo
+docs

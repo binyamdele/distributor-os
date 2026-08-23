@@ -29,11 +29,11 @@
     "seed:volume": "tsx prisma/seed-volume.ts",
     "test:perf": "vitest run --project integration tests/integration/dashboard-performance.test.ts",
     "admin:create-organization": "tsx scripts/create-organization.ts",
-    "admin:import": "tsx scripts/import.ts",
+    "admin:import": "tsx --require ./scripts/server-only-stub.cjs scripts/import.ts",
     "ops:verify-migrations": "tsx scripts/verify-migrations.ts",
     "ops:backup": "tsx scripts/backup.ts",
     "ops:restore-drill": "tsx scripts/restore-drill.ts",
-    "ops:load-test": "tsx scripts/load-test.ts",
+    "ops:load-test": "tsx --require ./scripts/server-only-stub.cjs scripts/load-test.ts",
     "ops:scan-secrets": "tsx scripts/scan-secrets.ts",
     "ci": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build"
   },

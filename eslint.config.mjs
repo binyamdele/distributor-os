@@ -129,6 +129,20 @@ const config = [
       'no-console': 'off',
     },
   },
+
+  /*
+   * The CommonJS preload that lets CLI scripts import server-only modules.
+   *
+   * It has to be CommonJS and it has to use require(), because it is loaded with --require
+   * before any ESM resolution happens. That is the whole mechanism.
+   */
+  {
+    files: ['scripts/**/*.cjs'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+      'no-undef': 'off',
+    },
+  },
 ];
 
 export default config;
