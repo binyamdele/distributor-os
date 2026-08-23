@@ -1,0 +1,5 @@
+sku,name,category,unit,selling_price,tax_rate_percent,reorder_threshold
+CEM-OPC-50,OPC Cement 50kg,Cement,bag,1250.00,15,1000
+RB-08,Rebar 8mm,Reinforcement,piece,640.00,15,400
+RB-12,Rebar 12mm,Reinforcement,piece,1420.00,15,600
+HB-20,Hollow Block 20cm,Masonry,piece,42.00,15,3000

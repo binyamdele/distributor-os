@@ -77,6 +77,7 @@ model Organization {
   inventoryDiscrepancies InventoryDiscrepancy[]
   returns                Return[]
   returnItems            ReturnItem[]
+  importJobs             ImportJob[]
 
   @@map("organizations")
 }
@@ -1391,6 +1392,14 @@ model Delivery {
 
 enum InventoryMovementType {
   /// A counted correction, made by a person who walked the shelf. Phase 1's original meaning.
+  /// The count a distributor starts with, recorded once at onboarding.
+  ///
+  /// Its own type rather than a manual adjustment with a helpful reason string, because it is a
+  /// different kind of fact: everything after it is a movement *from* a known baseline, and the
+  /// baseline itself was never observed by this system. When somebody asks in eight months why
+  /// cement stands where it does, the ledger has to be able to say "it started at 1,430" without
+  /// that being indistinguishable from a correction somebody typed.
+  OPENING_BALANCE
   MANUAL_ADJUSTMENT
   /// Goods leaving warehouse custody against an order. Phase 6's consumption.
   FULFILLMENT_CONSUMPTION
@@ -1641,4 +1650,45 @@ enum OrderOperationalException {
   DELIVERY_LOST
   /// Goods came back to the yard. What the customer is owed is unresolved.
   GOODS_RETURNED
+}
+
+/// A file somebody imported, recorded so they cannot import it twice.
+///
+/// The reason this exists is narrow and specific: opening stock. Importing a customer list twice
+/// produces visible duplicates that somebody notices and deletes. Importing an opening-stock
+/// file twice silently doubles the yard, and nothing about the result looks wrong — every number
+/// is plausible, the ledger is consistent, and the error is only discovered when a physical
+/// count disagrees weeks later.
+///
+/// Keyed on a hash of the file's content, not its name: "stock.csv" and "stock (1).csv" are the
+/// same file, and `opening-FINAL.csv` is a different one.
+model ImportJob {
+  id             String @id @default(uuid()) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+
+  kind        ImportKind
+  /// SHA-256 of the whitespace-normalised file content.
+  fingerprint String
+
+  /// What the operator called the file. Display only, and never trusted for anything.
+  filename String?
+
+  rowCount     Int @map("row_count")
+  createdCount Int @default(0) @map("created_count")
+  updatedCount Int @default(0) @map("updated_count")
+
+  importedById String?  @map("imported_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, kind, fingerprint])
+  @@index([organizationId])
+  @@map("import_jobs")
+}
+
+enum ImportKind {
+  CUSTOMERS
+  PRODUCTS
+  OPENING_STOCK
 }

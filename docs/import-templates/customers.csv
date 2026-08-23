@@ -1,0 +1,4 @@
+company_name,contact_name,phone,email,address,credit_status,credit_limit,payment_terms_days
+ABC Construction PLC,Tewodros Alemu,+251911000101,procurement@abc.example,"Bole Bulbula, Addis Ababa",CREDIT_ALLOWED,2000000.00,30
+XYZ Trading,Frehiwot Assefa,0911000102,,"Merkato, Addis Ababa",CREDIT_ALLOWED,750000.00,15
+Horizon Contractors,Bereket Solomon,+251911000103,,"Ayat, Addis Ababa",CASH_ONLY,0,0
