@@ -23,6 +23,12 @@ Storage is **warning at first, critical only when sustained**: quotations, order
 delivery all keep working when a bucket is unreachable, so it is a partial outage and paging at
 minute one would train people to ignore it.
 
+One exception, and it is deliberate. **A production deployment configured for S3 has declared the
+evidence store to be required**, so readiness reports not-ready as soon as the bucket stops
+answering rather than serving traffic that cannot complete a payment. In that configuration the
+"Not ready" row above fires first and this row never gets the chance to — which is the intent: a
+load balancer should stop sending payment traffic to a container that cannot store evidence.
+
 ---
 
 ## Warning — look at it today
@@ -48,18 +54,33 @@ Two alerts, and both are needed because they catch different failures:
 2. **No recent backup exists** — it never ran at all. A failure alert cannot detect this, because
    a job that does not run produces no failure.
 
-Minimum acceptable arrangement:
+Both are now implemented rather than described. `ops:backup` raises the first itself — every exit
+path that means "no backup was taken" delivers an alert before the process ends — and
+`ops:check-backup-freshness` raises the second.
 
-```bash
-# In the nightly cron. Any non-zero exit reaches a person.
-pnpm ops:backup --label nightly || notify "BACKUP FAILED on $(hostname)"
-
-# Weekly, independently: is the newest dump less than 48 hours old?
-find ./backups -name '*.dump' -mtime -2 | grep -q . || notify "NO RECENT BACKUP"
+```
+0 2 * * *   cd /srv/distributor-os && pnpm ops:backup --label nightly
+0 8 * * *   cd /srv/distributor-os && pnpm ops:check-backup-freshness --max-age-hours 48
 ```
 
-"Notify" can be an email, a Telegram message to the owner, or a line in a monitoring tool. What it
-cannot be is a log file nobody opens.
+**Run the freshness check from a different machine or scheduler than the backup.** A checker
+sharing a crontab with the thing it checks dies with it, and the failure it exists to detect is
+precisely "the scheduler stopped".
+
+Delivery is configured by `ALERT_WEBHOOK_URL` — any Slack, Discord or Google Chat incoming
+webhook; the payload carries both a `text` field those render and structured fields for anything
+else. Every alert is *also* appended to `./backups/alerts.log` first, so a webhook outage cannot
+swallow the notice entirely.
+
+```bash
+pnpm ops:notify --test   # confirm it arrives where a person will actually see it
+```
+
+The freshness check verifies the newest dump against its recorded SHA-256 as well as its age,
+because a dump truncated by a full disk has a recent timestamp and a plausible size.
+
+What the destination cannot be is a log file nobody opens. **Until `ALERT_WEBHOOK_URL` points at
+somewhere a human reads, the alerting is a mechanism and not a safety net.**
 
 ---
 

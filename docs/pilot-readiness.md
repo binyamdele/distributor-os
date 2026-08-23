@@ -93,9 +93,13 @@ All 18 migrations replay onto an empty database, verified in CI.
 written and locally verified. The first execution of the runbook against a live host will be the
 first. Treat it as an exercise with nobody depending on it.
 
-**The S3 storage adapter is specified and not implemented.** The `FileStore` interface has no URL
-method and the production config already refuses local storage, so the seam is right — but the
-adapter itself is a remaining task, listed as BLOCKED in §11.
+**The S3 storage adapter is now implemented and integration-tested against a real S3-compatible
+server**, and the container image now builds — which it had never been asked to do. Building it
+found two defects in the Dockerfile Phase 9 shipped: a `COPY` of a `public/` directory this
+project does not have, and hand-copied Prisma paths that exist under npm's flat `node_modules` and
+not under pnpm's symlinked store. Both were fatal, and neither could have been found by reading.
+
+See [`pilot-launch-gate.md`](pilot-launch-gate.md) for what is cleared and what is not.
 
 ---
 
@@ -141,8 +145,16 @@ Alert definitions, an issue template with a classification scheme, a retention a
 document, and a load test: **0% error rate, 518 requests at 15 concurrent users**, p50 38–1642 ms
 by operation.
 
-**Limitations:** alert delivery is not wired to a destination — that belongs to whoever owns the
-production account; and nobody is yet named as carrying the phone.
+**Alert delivery now exists as a mechanism.** Every exit path from `ops:backup` that means "no
+backup was taken" delivers an alert before the process ends, proven by causing a real failure and
+watching a real HTTP POST arrive at a receiver. `ops:check-backup-freshness` covers the failure a
+failure-alert structurally cannot — a schedule that stopped running, which produces no error at
+all. `ops:maintenance` is a kill switch that stops writes while leaving reads working, verified
+both ways, including that lifting it does *not* restore UPDATE and DELETE on the append-only
+tables.
+
+**Limitations:** `ALERT_WEBHOOK_URL` points at no real inbox yet — that belongs to whoever owns
+the production account; and nobody is yet named as carrying the phone.
 
 ---
 
@@ -165,15 +177,18 @@ With `AI_PROVIDER=disabled`, nothing leaves the building at all and the product 
 
 ## 11. Blockers before real data
 
-1. **Deploy and run the deployment runbook end to end** against a real host. Nothing above has
-   been executed against production.
-2. **Implement the S3 storage adapter.** Production refuses local storage, correctly, so payment
-   evidence cannot be stored until this exists.
-3. **Restore drill against production**, once there is a production.
-4. **Wire backup scheduling and failure alerting** to somewhere a person reads.
+Tracked with their evidence in [`pilot-launch-gate.md`](pilot-launch-gate.md). In short:
 
-Items 1 and 2 are engineering. Items 3 and 4 are the ones most likely to be postponed and least
-forgivable to have skipped.
+1. **Deploy and run the deployment runbook end to end** against a real host — **BLOCKED**. The
+   image builds and runs, but no cloud account exists in this environment to deploy it to.
+2. **Implement the S3 storage adapter** — **done**, and tested against a real S3-compatible
+   server rather than a mock, which is how three real defects were found.
+3. **Restore drill against production**, once there is a production — **BLOCKED** by item 1.
+4. **Wire backup scheduling and failure alerting** to somewhere a person reads — the mechanism is
+   **done and proven**; the destination is still nowhere.
+
+Items 1 and 3 now reduce to the same missing thing: a hosting account. Item 4's remainder is one
+webhook URL and two cron lines.
 
 ---
 

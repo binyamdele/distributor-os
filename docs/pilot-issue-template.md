@@ -56,6 +56,21 @@ Resolution:
 Severity is **the user's experience**, not the engineering difficulty. A one-character label fix
 that makes Finance confirm the wrong payment is blocking.
 
+These four words describe how much an issue hurts to work with.
+[`pilot-severity-policy.md`](pilot-severity-policy.md) has a separate P0–P3 scale that decides
+*who is woken and whether the pilot stops*, and the two are not the same question:
+
+| Here | There | The difference |
+|---|---|---|
+| — | **P0** | Something false was recorded: wrong money, wrong stock, a cross-tenant leak. **Throw the kill switch.** An issue can be P0 while nobody found it annoying at all — that is exactly what makes it P0 |
+| Blocking | **P1** | Real work cannot be completed, but nothing false was recorded |
+| Painful | **P2** | A workaround exists |
+| Annoying / Cosmetic | **P3** | Log and defer |
+
+**A P0 is not a severe version of "blocking".** Blocking means somebody is stuck and knows it. P0
+means a number in the system is wrong and nobody may have noticed — which is the failure this
+whole pilot exists to detect.
+
 ---
 
 ## Classification
