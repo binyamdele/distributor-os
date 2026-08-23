@@ -98,7 +98,27 @@ export function errorReporter(): ErrorReporter {
   if (override) return override;
   if (cached) return cached;
 
-  const dsn = config().ERROR_REPORTING_DSN;
+  /*
+   * Reading configuration must never be able to stop an error from being reported.
+   *
+   * This used to be a bare `config().ERROR_REPORTING_DSN`, which meant the error path depended
+   * on the very thing most likely to be broken when the error path is needed. A container with
+   * an invalid environment answered its readiness probe with a bare HTTP 500 and an empty body:
+   * `checkReadiness` threw on `config()`, the route's catch called `captureException` to turn
+   * that into a diagnosable 503, and `captureException` threw on `config()` again.
+   *
+   * The one code path whose job is to explain a failure could not run during the failure it
+   * existed to explain. Falling back to the logging reporter is not a degradation here — with no
+   * readable configuration there is no DSN to forward to anyway, and a structured log line is
+   * exactly the right destination.
+   */
+  let dsn: string | undefined;
+  try {
+    dsn = config().ERROR_REPORTING_DSN;
+  } catch {
+    return new LoggingErrorReporter();
+  }
+
   cached = dsn ? new ForwardingErrorReporter(dsn) : new LoggingErrorReporter();
   return cached;
 }

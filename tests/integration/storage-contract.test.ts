@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
+import { CreateBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { LocalFileStore, S3FileStore } from '@/platform/storage';
 import type { FileStore } from '@/platform/storage';
@@ -226,6 +226,58 @@ describe.skipIf(!s3Up)('S3 (MinIO)', () => {
   });
 
   describe('S3-specific failure behaviour', () => {
+    it('lets a restore drill catch bytes that no longer match their recorded hash', async () => {
+      /*
+       * The property the restore drill rests on, asserted against a real server.
+       *
+       * The drill's evidence check reads each file and compares what it hashes to what the
+       * database recorded. That comparison is only worth running if a divergence is actually
+       * visible — so this replaces an object's bytes behind the store's back, exactly as a
+       * corrupted transfer or an out-of-band overwrite would, and confirms the hash no longer
+       * agrees. An evidence store that quietly returns the wrong bank slip is worse than one
+       * that is empty, because nothing announces it.
+       */
+      const client = new S3Client({
+        region: 'us-east-1',
+        endpoint: S3_ENDPOINT,
+        forcePathStyle: true,
+        credentials: { accessKeyId: S3_ACCESS_KEY, secretAccessKey: S3_SECRET_KEY },
+      });
+
+      const store = new S3FileStore({
+        bucket: S3_BUCKET,
+        region: 'us-east-1',
+        endpoint: S3_ENDPOINT,
+        accessKeyId: S3_ACCESS_KEY,
+        secretAccessKey: S3_SECRET_KEY,
+        forcePathStyle: true,
+      });
+
+      const original = new TextEncoder().encode('the slip that was uploaded');
+      const stored = await store.put({
+        organizationId: randomUUID(),
+        bytes: original,
+        mimeType: 'image/png',
+      });
+
+      expect(sha256((await store.read(stored.key))!)).toBe(stored.contentHash);
+
+      await client.send(
+        new PutObjectCommand({
+          Bucket: S3_BUCKET,
+          Key: stored.key,
+          Body: new TextEncoder().encode('different bytes entirely'),
+          ContentType: 'image/png',
+        }),
+      );
+
+      const after = await store.read(stored.key);
+      expect(after).not.toBeNull();
+      expect(sha256(after!)).not.toBe(stored.contentHash);
+
+      await store.delete(stored.key);
+    });
+
     it('reports a missing bucket rather than claiming to be healthy', async () => {
       const store = new S3FileStore({
         bucket: `does-not-exist-${randomUUID()}`,

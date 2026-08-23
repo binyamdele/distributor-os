@@ -18,7 +18,10 @@ async function signIn(page: Page, email: string) {
  * Credit rather than cash, because the payment gate is Phase 5's subject and this file is about
  * what happens when the yard disagrees with the system.
  */
-async function pickedTask(page: Page, bags: number): Promise<{ taskUrl: string; orderUrl: string }> {
+async function pickedTask(
+  page: Page,
+  bags: number,
+): Promise<{ taskUrl: string; orderUrl: string }> {
   await signIn(page, 'sales@addisbuild.example');
 
   await page.goto('/inquiries/new');
@@ -84,10 +87,29 @@ test.describe('an inventory discrepancy', () => {
     await line.getByTestId('report-count-button').click();
     await expect(page).toHaveURL(new RegExp(taskUrl.replace(/^https?:\/\/[^/]+/, '') + '$'));
 
+    /*
+     * Wait for the report to have landed before navigating anywhere.
+     *
+     * `click` returns once the click is dispatched, not once the server action it triggers has
+     * committed — and the next line navigates, which abandons the in-flight request. The server
+     * still records the count, so the database ends up correct while the browser is looking at a
+     * page rendered a few milliseconds too early: the discrepancy is open, and the card that
+     * announces it is missing.
+     *
+     * It failed only in the mobile project, and deterministically, which is what made it look
+     * like a layout bug. It is not: on a 393px viewport the button sits below the fold, so the
+     * click waits for a scroll first and loses the race that the desktop click happens to win.
+     * A timing assumption that holds at one viewport and not another is still a timing
+     * assumption.
+     *
+     * Waiting on the action's own visible consequence removes the assumption entirely.
+     */
+    await expect(page.getByTestId('blocked-by-count')).toBeVisible();
+
     // Reporting moves nothing. The figure on the line is unchanged.
     expect(await onHand(page, taskUrl)).toBe(before);
 
-    // And the handoff is now blocked, with the reference to follow.
+    // And the handoff is still blocked after a fresh load, with the reference to follow.
     await expect(page.getByTestId('blocked-by-count')).toBeVisible();
     await page.getByTestId('complete-task-button').click();
     await expect(page.getByText(/^IR-\d{6} is open/)).toBeVisible();
