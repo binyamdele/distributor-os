@@ -16,9 +16,13 @@
  * reporting.
  */
 import { config as loadEnv } from 'dotenv';
+import { guardDatabaseTarget, guardDestructive } from './guard';
 import { PrismaClient } from '@prisma/client';
 
 loadEnv();
+
+guardDestructive('volume seed');
+guardDatabaseTarget('volume seed');
 
 const url = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
 if (!url) throw new Error('DIRECT_URL or DATABASE_URL must be set.');

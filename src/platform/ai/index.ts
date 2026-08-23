@@ -1,5 +1,6 @@
 import { config } from '@/platform/config';
 import { AnthropicAIProvider } from './anthropic-provider';
+import { DisabledAIProvider } from './disabled-provider';
 import { MockAIProvider } from './mock-provider';
 import type { AIProvider } from './types';
 
@@ -7,6 +8,7 @@ export * from './brief-contract';
 export * from './contract';
 export * from './types';
 export { MOCK_MALFORMED_SENTINEL, MockAIProvider } from './mock-provider';
+export { DisabledAIProvider } from './disabled-provider';
 export { AnthropicAIProvider } from './anthropic-provider';
 export {
   PARSE_INQUIRY_PROMPT_VERSION,
@@ -23,17 +25,36 @@ export {
  * is calling a real model and is silently not.
  */
 const mock = new MockAIProvider();
+const disabledProvider = new DisabledAIProvider();
 
 let override: AIProvider | null = null;
 
 export function aiProvider(): AIProvider {
   if (override) return override;
 
-  const { AI_PROVIDER, ANTHROPIC_API_KEY } = config();
+  const { AI_PROVIDER, ANTHROPIC_API_KEY, AI_TIMEOUT_MS } = config();
+
   if (AI_PROVIDER === 'anthropic') {
-    return new AnthropicAIProvider(ANTHROPIC_API_KEY ?? '');
+    return new AnthropicAIProvider(ANTHROPIC_API_KEY ?? '', undefined, undefined, AI_TIMEOUT_MS);
   }
+
+  /*
+   * `disabled` is a real choice, not an absence.
+   *
+   * Every caller already handles an `AiOutcome` failure — Phase 2 sends the inquiry to manual
+   * review, Phase 8 falls back to the deterministic brief — so a provider that always reports
+   * NOT_CONFIGURED exercises paths that are tested rather than a new one. The alternative,
+   * scattering `if (aiEnabled)` through the modules, would put the decision in a dozen places
+   * and eventually miss one.
+   */
+  if (AI_PROVIDER === 'disabled') return disabledProvider;
+
   return mock;
+}
+
+/** True when a real provider is configured. The UI must not claim AI involvement otherwise. */
+export function aiIsReal(): boolean {
+  return config().AI_PROVIDER === 'anthropic';
 }
 
 /** The mock instance the application would use, for registering fixtures. */

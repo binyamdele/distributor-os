@@ -32,3 +32,6 @@ Thumbs.db
 
 # TypeScript incremental build cache
 *.tsbuildinfo
+
+# Database dumps. Real customer data; never committed.
+/backups/

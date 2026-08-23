@@ -14,6 +14,7 @@
  */
 import path from 'node:path';
 import { config as loadEnv } from 'dotenv';
+import { guardDatabaseTarget, guardDestructive } from './guard';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { hashPassword } from '../src/platform/security/passwords';
 import { normalizeAlias } from '../src/modules/catalog/normalize';
@@ -33,6 +34,13 @@ import {
 } from './seed-exceptions';
 
 loadEnv();
+
+// Before anything reads a connection string. Phase 9 §8: production must never be able to run
+// the demo seed, and the trigger bypass inside the fulfilment seed must never be reachable as a
+// normal operation. Two independent checks — what the operator declared, and where the database
+// actually is — so one mistake is not enough.
+guardDestructive('demo seed');
+guardDatabaseTarget('demo seed');
 
 const url = process.env.DIRECT_URL ?? process.env.DATABASE_URL;
 if (!url) throw new Error('DIRECT_URL or DATABASE_URL must be set to seed.');

@@ -67,8 +67,20 @@ export async function releaseExceptionScenarios(
     }
   }
 
+  /*
+   * Every return in the demo organization, not only the ones this file labelled.
+   *
+   * Matching on the marker was wrong and Phase 9 found it: the E2E suite drives the real return
+   * workflow through the UI against this same database, and those rows carry no marker. The
+   * unwind skipped them, and the next seed hit the Phase 7 partial unique index — one live
+   * return per delivery — and failed. Correctly, which is the only reason it was visible.
+   *
+   * The demo organization's rows all belong to the demo, however they were created, so the
+   * unwind claims them all. It is also the same structural approach already used a few lines
+   * below for retry deliveries, which never needed a marker either.
+   */
   const returns = await prisma.return.findMany({
-    where: { organizationId, note: { startsWith: MARKER } },
+    where: { organizationId },
     include: { items: true },
   });
 
