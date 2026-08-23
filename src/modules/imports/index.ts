@@ -168,7 +168,10 @@ export async function commitCustomers(
   // Validated again server-side rather than trusting whatever the preview returned. The preview
   // is a read; the client could have edited the file between the two calls.
   if (!preview.value.canCommit) {
-    return fail('VALIDATION_FAILED', preview.value.blockedReason ?? 'This file cannot be imported.');
+    return fail(
+      'VALIDATION_FAILED',
+      preview.value.blockedReason ?? 'This file cannot be imported.',
+    );
   }
 
   if (preview.value.alreadyImportedAt && !options.acknowledgeDuplicate) {
@@ -276,7 +279,10 @@ export async function commitProducts(
   if (!preview.ok) return preview;
 
   if (!preview.value.canCommit) {
-    return fail('VALIDATION_FAILED', preview.value.blockedReason ?? 'This file cannot be imported.');
+    return fail(
+      'VALIDATION_FAILED',
+      preview.value.blockedReason ?? 'This file cannot be imported.',
+    );
   }
 
   if (preview.value.alreadyImportedAt && !options.acknowledgeDuplicate) {
@@ -483,7 +489,10 @@ export async function commitOpeningStock(
   }
 
   if (!preview.value.canCommit) {
-    return fail('VALIDATION_FAILED', preview.value.blockedReason ?? 'This file cannot be imported.');
+    return fail(
+      'VALIDATION_FAILED',
+      preview.value.blockedReason ?? 'This file cannot be imported.',
+    );
   }
 
   const products = await tx.product.findMany({ select: { id: true, sku: true } });

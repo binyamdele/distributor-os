@@ -186,7 +186,9 @@ async function main() {
   const errorRate = total === 0 ? 0 : (errors / total) * 100;
 
   console.log('');
-  console.log(`  Total requests   ${total} in ${elapsed.toFixed(1)}s (${(total / elapsed).toFixed(1)}/s)`);
+  console.log(
+    `  Total requests   ${total} in ${elapsed.toFixed(1)}s (${(total / elapsed).toFixed(1)}/s)`,
+  );
   console.log(`  Error rate       ${errorRate.toFixed(2)}%`);
   console.log('');
 

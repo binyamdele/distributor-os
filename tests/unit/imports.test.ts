@@ -135,7 +135,9 @@ describe('the products template', () => {
 
   it('reads a valid catalogue', () => {
     const parsed = parseProducts(
-      file('CEM-OPC-50,OPC Cement 50kg,Cement,bag,1250.00,15,1000\nRB-12,Rebar 12mm,,piece,1420,15,600'),
+      file(
+        'CEM-OPC-50,OPC Cement 50kg,Cement,bag,1250.00,15,1000\nRB-12,Rebar 12mm,,piece,1420,15,600',
+      ),
     );
 
     expect(parsed.fatal).toBeNull();
@@ -170,7 +172,9 @@ describe('the products template', () => {
   });
 
   it('refuses a duplicate SKU that differs only in case', () => {
-    const parsed = parseProducts(file('CEM-50,Cement,,bag,1250,15,0\ncem-50,Cement,,bag,1250,15,0'));
+    const parsed = parseProducts(
+      file('CEM-50,Cement,,bag,1250,15,0\ncem-50,Cement,,bag,1250,15,0'),
+    );
     expect(hasErrors(parsed.issues)).toBe(true);
   });
 
@@ -233,7 +237,9 @@ describe('the customers template', () => {
 
   it('reads a valid customer list', () => {
     const parsed = parseCustomers(
-      file('ABC Construction PLC,Tewodros,+251911000101,a@b.example,Bole,CREDIT_ALLOWED,2000000.00,30'),
+      file(
+        'ABC Construction PLC,Tewodros,+251911000101,a@b.example,Bole,CREDIT_ALLOWED,2000000.00,30',
+      ),
     );
 
     expect(hasErrors(parsed.issues)).toBe(false);

@@ -99,9 +99,7 @@ describe('importing a catalogue', () => {
   it('records the import so the same file is recognised again', async () => {
     await withTenant(org.organizationId, (tx) => commitProducts(tx, org.context, CATALOGUE));
 
-    const preview = await withTenant(org.organizationId, (tx) =>
-      previewProducts(tx, CATALOGUE),
-    );
+    const preview = await withTenant(org.organizationId, (tx) => previewProducts(tx, CATALOGUE));
     expect(preview.ok).toBe(true);
     if (!preview.ok) return;
     expect(preview.value.alreadyImportedAt).not.toBeNull();
@@ -290,7 +288,9 @@ describe('importing opening stock', () => {
       where: { organizationId: org.organizationId, sku: 'CEM-OPC-50' },
     });
     expect(cement.availableStock).toBe(0);
-    expect(await owner.inventoryMovement.count({ where: { organizationId: org.organizationId } })).toBe(0);
+    expect(
+      await owner.inventoryMovement.count({ where: { organizationId: org.organizationId } }),
+    ).toBe(0);
   });
 
   it('rolls everything back when the transaction fails afterwards', async () => {
@@ -308,7 +308,9 @@ describe('importing opening stock', () => {
       where: { organizationId: org.organizationId, sku: 'CEM-OPC-50' },
     });
     expect(cement.availableStock).toBe(0);
-    expect(await owner.inventoryMovement.count({ where: { organizationId: org.organizationId } })).toBe(0);
+    expect(
+      await owner.inventoryMovement.count({ where: { organizationId: org.organizationId } }),
+    ).toBe(0);
     // Scoped to this kind: the beforeEach imported a catalogue, whose job row legitimately
     // remains. What must be absent is a record of the opening-stock import that rolled back —
     // otherwise it would block a legitimate retry of an import that never happened.

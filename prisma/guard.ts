@@ -81,11 +81,15 @@ export function looksLikeProductionDatabase(url: string | undefined): boolean {
     return false;
   }
 
-  const local = host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === 'postgres';
+  const local =
+    host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === 'postgres';
   return !local;
 }
 
-export function guardDatabaseTarget(operation: Operation, env: NodeJS.ProcessEnv = process.env): void {
+export function guardDatabaseTarget(
+  operation: Operation,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
   const url = env.DIRECT_URL ?? env.DATABASE_URL;
   if (!looksLikeProductionDatabase(url)) return;
 

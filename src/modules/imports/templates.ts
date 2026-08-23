@@ -217,7 +217,11 @@ export function parseCustomers(input: string): ParsedImport<CustomerRow> {
     const termsRaw = row.payment_terms_days ?? '';
     const paymentTermsDays = termsRaw ? parseWholeNumber(termsRaw) : 0;
     if (paymentTermsDays === null || paymentTermsDays < 0 || paymentTermsDays > 365) {
-      add('payment_terms_days', 'error', `"${termsRaw}" is not a number of days between 0 and 365.`);
+      add(
+        'payment_terms_days',
+        'error',
+        `"${termsRaw}" is not a number of days between 0 and 365.`,
+      );
       return;
     }
 

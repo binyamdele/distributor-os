@@ -131,7 +131,19 @@ async function readFacts(client: PrismaClient): Promise<Facts> {
 function psql(container: string, user: string, password: string, database: string, sql: string) {
   return spawnSync(
     'docker',
-    ['exec', '-e', `PGPASSWORD=${password}`, container, 'psql', '-U', user, '-d', database, '-c', sql],
+    [
+      'exec',
+      '-e',
+      `PGPASSWORD=${password}`,
+      container,
+      'psql',
+      '-U',
+      user,
+      '-d',
+      database,
+      '-c',
+      sql,
+    ],
     { encoding: 'utf8' },
   );
 }
@@ -139,9 +151,11 @@ function psql(container: string, user: string, password: string, database: strin
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  if (!args.dump) fail('Usage: pnpm ops:restore-drill --dump ./backups/<file>.dump [--container <name>]');
+  if (!args.dump)
+    fail('Usage: pnpm ops:restore-drill --dump ./backups/<file>.dump [--container <name>]');
   if (!existsSync(args.dump)) fail(`No such dump: ${args.dump}`);
-  if (!args.container) fail('--container is required: pg_restore runs inside the Postgres container.');
+  if (!args.container)
+    fail('--container is required: pg_restore runs inside the Postgres container.');
 
   const url = process.env.DIRECT_URL;
   if (!url) fail('DIRECT_URL must be set.');
@@ -179,7 +193,13 @@ async function main() {
 
   // --- 2. restore into a scratch database -----------------------------------
   console.log(`  Creating scratch database "${args.scratch}"…`);
-  psql(args.container, user, password, 'postgres', `DROP DATABASE IF EXISTS ${args.scratch} WITH (FORCE);`);
+  psql(
+    args.container,
+    user,
+    password,
+    'postgres',
+    `DROP DATABASE IF EXISTS ${args.scratch} WITH (FORCE);`,
+  );
   const created = psql(
     args.container,
     user,
@@ -249,7 +269,9 @@ async function main() {
   // --- 5. the evidence files the restored rows point at ---------------------
   console.log('');
   const evidenceDir = process.env.FILE_STORAGE_DIR ?? './storage';
-  const restoredForEvidence = new PrismaClient({ datasources: { db: { url: scratchUrl.toString() } } });
+  const restoredForEvidence = new PrismaClient({
+    datasources: { db: { url: scratchUrl.toString() } },
+  });
   const evidence = await restoredForEvidence.paymentEvidenceFile.findMany({
     select: { storageKey: true, contentHash: true, sizeBytes: true },
   });
@@ -283,7 +305,13 @@ async function main() {
 
   // --- 6. tidy up ------------------------------------------------------------
   if (!args.keep) {
-    psql(args.container, user, password, 'postgres', `DROP DATABASE IF EXISTS ${args.scratch} WITH (FORCE);`);
+    psql(
+      args.container,
+      user,
+      password,
+      'postgres',
+      `DROP DATABASE IF EXISTS ${args.scratch} WITH (FORCE);`,
+    );
     console.log(`\n  Scratch database dropped.`);
   } else {
     console.log(`\n  Scratch database "${args.scratch}" kept for inspection.`);

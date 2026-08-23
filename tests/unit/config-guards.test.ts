@@ -187,8 +187,12 @@ describe('staging can rehearse a release', () => {
 describe('the destructive-operation guard', () => {
   it('permits development and test', () => {
     for (const appEnv of ['development', 'test']) {
-      expect(assessGuard('demo seed', { APP_ENV: appEnv } as unknown as NodeJS.ProcessEnv).allowed).toBe(true);
-      expect(destructiveOperationsAllowed({ APP_ENV: appEnv } as unknown as NodeJS.ProcessEnv)).toBe(true);
+      expect(
+        assessGuard('demo seed', { APP_ENV: appEnv } as unknown as NodeJS.ProcessEnv).allowed,
+      ).toBe(true);
+      expect(
+        destructiveOperationsAllowed({ APP_ENV: appEnv } as unknown as NodeJS.ProcessEnv),
+      ).toBe(true);
     }
   });
 
@@ -196,13 +200,17 @@ describe('the destructive-operation guard', () => {
     for (const appEnv of ['production', 'staging']) {
       const verdict = assessGuard('demo seed', { APP_ENV: appEnv } as unknown as NodeJS.ProcessEnv);
       expect(verdict.allowed, appEnv).toBe(false);
-      expect(destructiveOperationsAllowed({ APP_ENV: appEnv } as unknown as NodeJS.ProcessEnv)).toBe(false);
+      expect(
+        destructiveOperationsAllowed({ APP_ENV: appEnv } as unknown as NodeJS.ProcessEnv),
+      ).toBe(false);
     }
   });
 
   it('explains itself, including the trigger bypass', () => {
     // The refusal has to say why, or somebody will assume it is over-cautious and work around it.
-    const verdict = assessGuard('demo seed', { APP_ENV: 'production' } as unknown as NodeJS.ProcessEnv);
+    const verdict = assessGuard('demo seed', {
+      APP_ENV: 'production',
+    } as unknown as NodeJS.ProcessEnv);
     expect(verdict.reason).toContain('trigger');
     expect(verdict.reason).toContain('APP_ENV=development');
   });
@@ -224,19 +232,16 @@ describe('the destructive-operation guard', () => {
 describe('the database target guard', () => {
   it('treats a local database as safe', () => {
     for (const host of ['localhost', '127.0.0.1', 'postgres']) {
-      expect(
-        looksLikeProductionDatabase(`postgresql://u:p@${host}:5432/db`),
-        host,
-      ).toBe(false);
+      expect(looksLikeProductionDatabase(`postgresql://u:p@${host}:5432/db`), host).toBe(false);
     }
   });
 
   it('treats a remote database as production', () => {
     // The second, independent check. APP_ENV is a promise about a shell; this looks at where the
     // connection actually points, so one mistake is not enough to lose a distributor's records.
-    expect(looksLikeProductionDatabase('postgresql://u:p@db.eu-west-1.rds.amazonaws.com/prod')).toBe(
-      true,
-    );
+    expect(
+      looksLikeProductionDatabase('postgresql://u:p@db.eu-west-1.rds.amazonaws.com/prod'),
+    ).toBe(true);
   });
 
   it('does not fire on an absent or malformed url', () => {

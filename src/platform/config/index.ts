@@ -192,7 +192,12 @@ const schema = z
     }
 
     if (value.FILE_STORAGE_DRIVER === 's3') {
-      for (const key of ['S3_BUCKET', 'S3_REGION', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'] as const) {
+      for (const key of [
+        'S3_BUCKET',
+        'S3_REGION',
+        'S3_ACCESS_KEY_ID',
+        'S3_SECRET_ACCESS_KEY',
+      ] as const) {
         if (!value[key]) problem(`${key} is required when FILE_STORAGE_DRIVER="s3".`, key);
       }
     }

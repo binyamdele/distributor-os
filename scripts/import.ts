@@ -152,7 +152,9 @@ async function main() {
         acknowledgeDuplicate: args.acknowledgeDuplicate,
       });
       if (!result.ok) fail(result.error.message);
-      console.log(`\n  Imported: ${result.value.created} created, ${result.value.updated} updated.\n`);
+      console.log(
+        `\n  Imported: ${result.value.created} created, ${result.value.updated} updated.\n`,
+      );
       return;
     }
 
@@ -181,7 +183,9 @@ async function main() {
         acknowledgeDuplicate: args.acknowledgeDuplicate,
       });
       if (!result.ok) fail(result.error.message);
-      console.log(`\n  Imported: ${result.value.created} created, ${result.value.updated} updated.`);
+      console.log(
+        `\n  Imported: ${result.value.created} created, ${result.value.updated} updated.`,
+      );
       console.log('  Stock is untouched — import opening stock separately.\n');
       return;
     }
@@ -190,7 +194,9 @@ async function main() {
     if (!preview.ok) fail(preview.error.message);
 
     const totalUnits = preview.value.rows.reduce((sum, row) => sum + row.quantity, 0);
-    console.log(`\n  ${preview.value.rows.length} product(s), ${totalUnits.toLocaleString()} units`);
+    console.log(
+      `\n  ${preview.value.rows.length} product(s), ${totalUnits.toLocaleString()} units`,
+    );
     printIssues(preview.value.issues);
 
     if (preview.value.alreadyImportedAt) {

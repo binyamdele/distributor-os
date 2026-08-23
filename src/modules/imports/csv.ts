@@ -25,8 +25,7 @@ export interface CsvTable {
 }
 
 export type CsvResult =
-  | { readonly ok: true; readonly table: CsvTable }
-  | { readonly ok: false; readonly error: string };
+  { readonly ok: true; readonly table: CsvTable } | { readonly ok: false; readonly error: string };
 
 function splitLine(line: string): string[] {
   const cells: string[] = [];

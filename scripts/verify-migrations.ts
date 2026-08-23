@@ -54,10 +54,28 @@ function check(label: string, ok: boolean, detail = ''): void {
   if (!ok) failures += 1;
 }
 
-function psql(container: string, user: string, password: string, database: string, sql: string): string {
+function psql(
+  container: string,
+  user: string,
+  password: string,
+  database: string,
+  sql: string,
+): string {
   const result = spawnSync(
     'docker',
-    ['exec', '-e', `PGPASSWORD=${password}`, container, 'psql', '-U', user, '-d', database, '-tAc', sql],
+    [
+      'exec',
+      '-e',
+      `PGPASSWORD=${password}`,
+      container,
+      'psql',
+      '-U',
+      user,
+      '-d',
+      database,
+      '-tAc',
+      sql,
+    ],
     { encoding: 'utf8' },
   );
   if (result.status !== 0) fail(`psql failed:\n${result.stderr}`);
@@ -77,7 +95,13 @@ async function main() {
 
   console.log('\n=== Migration replay ===\n');
 
-  psql(args.container, user, password, 'postgres', `DROP DATABASE IF EXISTS ${SCRATCH} WITH (FORCE);`);
+  psql(
+    args.container,
+    user,
+    password,
+    'postgres',
+    `DROP DATABASE IF EXISTS ${SCRATCH} WITH (FORCE);`,
+  );
   psql(args.container, user, password, 'postgres', `CREATE DATABASE ${SCRATCH} OWNER ${user};`);
 
   // The application role's grants come from ALTER DEFAULT PRIVILEGES, which must be in place
@@ -106,7 +130,11 @@ async function main() {
     {
       encoding: 'utf8',
       shell: process.platform === 'win32',
-      env: { ...process.env, DATABASE_URL: scratchUrl.toString(), DIRECT_URL: scratchUrl.toString() },
+      env: {
+        ...process.env,
+        DATABASE_URL: scratchUrl.toString(),
+        DIRECT_URL: scratchUrl.toString(),
+      },
     },
   );
 
@@ -187,7 +215,11 @@ async function main() {
                        'stock_reservations_consumed_immutable',
                        'inventory_discrepancies_resolved_immutable');`,
   );
-  check('immutability triggers present', triggers.split(', ').filter(Boolean).length === 3, triggers);
+  check(
+    'immutability triggers present',
+    triggers.split(', ').filter(Boolean).length === 3,
+    triggers,
+  );
 
   const policyCount = psql(
     args.container,
@@ -199,7 +231,13 @@ async function main() {
   check(`tenant_isolation policies present (${policyCount})`, Number(policyCount) > 20);
 
   if (!args.keep) {
-    psql(args.container, user, password, 'postgres', `DROP DATABASE IF EXISTS ${SCRATCH} WITH (FORCE);`);
+    psql(
+      args.container,
+      user,
+      password,
+      'postgres',
+      `DROP DATABASE IF EXISTS ${SCRATCH} WITH (FORCE);`,
+    );
     console.log('\n  Scratch database dropped.');
   }
 
