@@ -89,6 +89,41 @@ async function requireDirectUrl(): Promise<string> {
   throw new Error('unreachable');
 }
 
+/**
+ * The arguments that decide what a dump contains, in one place because the two call paths below
+ * must not be able to drift apart.
+ */
+const BASE_DUMP_ARGS = [
+  '--format=custom',
+  '--compress=6',
+  // Roles and tablespaces belong to the cluster, not the database. Excluding them keeps the
+  // dump restorable into a fresh database whose roles were provisioned separately — which is
+  // exactly what the restore drill does.
+  '--no-owner',
+  '--no-privileges',
+  /*
+   * This application's data is entirely in `public`, and saying so is what makes the dump
+   * portable.
+   *
+   * On a managed provider the database is shared with the provider's own machinery — Supabase
+   * adds `auth`, `storage`, `realtime`, `graphql` and `extensions`, owned by roles like
+   * `supabase_admin` that do not exist anywhere else. A whole-database dump drags all of it
+   * along, and restoring that into a plain PostgreSQL 17 container fails on the missing roles
+   * and extensions. The restore drill restores into exactly such a container, so an unscoped
+   * dump would make the drill fail for reasons that have nothing to do with the application.
+   *
+   * Scoping to `public` also means the backup contains no copy of the provider's auth tables,
+   * which is a smaller and better thing to be holding.
+   *
+   * The one consequence worth knowing: extensions are database-level objects and are not emitted
+   * by a schema-scoped dump. This schema creates `pg_trgm`, and the index that used it was
+   * dropped in a later migration, so nothing in a restore depends on it. If a future migration
+   * adds an extension-backed index, the restore target must have that extension — which is the
+   * restore drill's job to catch, and it will.
+   */
+  '--schema=public',
+];
+
 /** A filesystem-safe timestamp. Sorts chronologically, which is what a restore needs. */
 function stamp(): string {
   return new Date().toISOString().replace(/[:.]/g, '-').replace('Z', '');
@@ -130,39 +165,45 @@ async function main() {
 
   console.log(`\nBacking up "${database}"…`);
 
-  const dumpArgs = [
-    '--format=custom',
-    '--compress=6',
-    // Roles and tablespaces belong to the cluster, not the database. Excluding them keeps the
-    // dump restorable into a fresh database whose roles were provisioned separately — which is
-    // exactly what the restore drill does.
-    '--no-owner',
-    '--no-privileges',
-    `--dbname=${dumpUrl}`,
-  ];
+  const dumpArgs = [...BASE_DUMP_ARGS, `--dbname=${dumpUrl}`];
 
   let dumped: Buffer;
 
   if (args.container) {
     /*
-     * Inside the container, the connection string from `.env` is wrong.
+     * The container runs `pg_dump`. *Which database it dumps depends on where the database is.*
      *
-     * It names `localhost:5434` — the port Docker publishes on the *host*. From inside the
-     * container there is nothing on 5434, and `localhost` is the container itself. So the URL is
-     * discarded here in favour of a local connection by user and database name, which is what
-     * `pg_dump` sees when it is already on the machine holding the data.
+     * The original version always discarded the connection string and dumped a local database by
+     * user and name. That is right for development — the URL says `localhost:5434`, which is the
+     * port Docker publishes on the *host*, and from inside the container there is nothing there.
      *
-     * The dump goes to stdout and is captured here, so the file lands on the host where the
-     * retention policy can see it rather than inside a container that gets recreated.
+     * It is wrong for a managed database, and quietly so. Point `DIRECT_URL` at Supabase, pass
+     * `--container distributor-os-postgres` because the host has no `pg_dump`, and the old code
+     * discarded the host entirely and dumped whatever the local container held. Usually that
+     * fails on an unknown role and merely wastes an afternoon. When the local container happens
+     * to have a role and database of the same names — which a stock `postgres` image and a
+     * provider username of `postgres` give you by default — it *succeeds*, and writes the wrong
+     * database out under a filename and checksum implying it is the staging backup. That is
+     * worse than no backup: it restores cleanly, and the mistake surfaces only when somebody
+     * looks for a row that was never in it.
+     *
+     * So the host decides. Loopback means the container is the database and a local connection
+     * is correct; anything else means the container is only being borrowed as a client, and the
+     * full connection string is passed through — which also carries `sslmode=require`, without
+     * which a managed provider refuses the connection outright.
      */
-    const localArgs = [
-      '--format=custom',
-      '--compress=6',
-      '--no-owner',
-      '--no-privileges',
-      `--username=${decodeURIComponent(parsed.username)}`,
-      `--dbname=${database}`,
-    ];
+    const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+    const databaseIsInTheContainer = LOOPBACK.has(parsed.hostname);
+
+    const inContainerArgs = databaseIsInTheContainer
+      ? [...BASE_DUMP_ARGS, `--username=${decodeURIComponent(parsed.username)}`, `--dbname=${database}`]
+      : [...BASE_DUMP_ARGS, `--dbname=${dumpUrl}`];
+
+    console.log(
+      databaseIsInTheContainer
+        ? `  Dumping the database inside "${args.container}".`
+        : `  Using "${args.container}" as a pg_dump client for ${parsed.hostname}.`,
+    );
 
     const result = spawnSync(
       'docker',
@@ -172,7 +213,7 @@ async function main() {
         `PGPASSWORD=${decodeURIComponent(parsed.password)}`,
         args.container,
         'pg_dump',
-        ...localArgs,
+        ...inContainerArgs,
       ],
       { encoding: 'buffer', maxBuffer: 1024 * 1024 * 1024 },
     );

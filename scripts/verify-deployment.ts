@@ -27,6 +27,7 @@
 import { spawnSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
 import { config as loadEnv } from 'dotenv';
+import { configuredDestinations } from './alert-sinks';
 
 loadEnv();
 
@@ -137,6 +138,26 @@ interface ReadyBody {
 
 async function verifyOverHttp(args: Args): Promise<void> {
   console.log(`\nDeployment  ${args.baseUrl}\n`);
+
+  /*
+   * HTTPS, before anything else.
+   *
+   * The session cookie is marked `secure` in production, so over plain http a browser simply
+   * never sends it and nobody can stay logged in — but that is not the reason this check exists.
+   * The reason is that every other check below passes happily over http, so a deployment that
+   * lost its TLS termination would be reported as fully verified while every request, including
+   * every password, crossed the network in clear text.
+   *
+   * A loopback address is exempt: that is the local artifact exercise, where there is no network
+   * to protect and no certificate to have.
+   */
+  const host = new URL(args.baseUrl).hostname;
+  const loopback = host === 'localhost' || host === '127.0.0.1' || host === '::1';
+  if (loopback) {
+    inconclusive('served over https', 'loopback address — nothing crosses a network');
+  } else {
+    check('served over https', args.baseUrl.startsWith('https://'), `scheme is ${args.baseUrl.split(':')[0]}`);
+  }
 
   const live = await get(`${args.baseUrl}/api/health/live`, args.timeoutMs);
   check('liveness answers 200', live.status === 200, `status ${live.status}`);
@@ -378,6 +399,24 @@ async function main(): Promise<void> {
     await verifyOverDatabase(args);
   } catch (error) {
     check('database is reachable', false, error instanceof Error ? error.message : 'unknown');
+  }
+
+  /*
+   * Is anybody actually going to be told when this deployment breaks?
+   *
+   * Names of configured sinks only — never a token, a chat id or a URL. It is reported rather
+   * than failed on, because this script is run from an operator's machine as often as from the
+   * scheduler that holds the alerting secrets, and the absence of a destination *here* does not
+   * prove its absence *there*. Saying so is the point: a deployment whose alerting nobody has
+   * confirmed is a deployment that fails silently.
+   */
+  const destinations = configuredDestinations();
+  const human = destinations.filter((name) => name !== 'file');
+  if (human.length > 0) {
+    console.log(`\nAlerting    configured: ${destinations.join(', ')}`);
+  } else {
+    console.log('\nAlerting    file only — no human-visible destination configured here.');
+    console.log('            Confirm with `pnpm ops:notify --test` wherever the scheduler runs.');
   }
 
   console.log('');

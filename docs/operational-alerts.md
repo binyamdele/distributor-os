@@ -19,6 +19,17 @@ day it matters.
 | **Repeated 500s** | > 10 unhandled errors in 5 min | A release has broken something | Take a correlation id from the logs and trace it; consider rolling back |
 | **Storage unavailable > 15 min** | readiness `file-store` degraded, sustained | Payment evidence cannot be uploaded or read | Check bucket credentials and the provider |
 
+The first four are raised by `ops:check-readiness`, which polls `/api/health/ready` on a schedule
+and names the failing dependency in the alert. It distinguishes two states that look alike and
+are not: a **503** means the application answered and told the truth about itself, while
+**unreachable** means nobody answered at all — the process, the host or the network. The second
+is the state where silence is most likely to be mistaken for health, so it is always critical.
+
+**Repeated 500s is not covered by anything in this repository.** It needs log aggregation, which
+the pilot does not have; `ERROR_REPORTING_DSN` pointed at Sentry is the intended answer, and its
+alerting rules live there rather than here. Saying so is better than listing it as though a cron
+job were watching.
+
 Storage is **warning at first, critical only when sustained**: quotations, orders, warehouse and
 delivery all keep working when a bucket is unreachable, so it is a partial outage and paging at
 minute one would train people to ignore it.
@@ -61,26 +72,67 @@ path that means "no backup was taken" delivers an alert before the process ends 
 ```
 0 2 * * *   cd /srv/distributor-os && pnpm ops:backup --label nightly
 0 8 * * *   cd /srv/distributor-os && pnpm ops:check-backup-freshness --max-age-hours 48
+*/5 * * * * cd /srv/distributor-os && pnpm ops:check-readiness --base-url https://<host> --quiet-when-healthy
 ```
 
-**Run the freshness check from a different machine or scheduler than the backup.** A checker
-sharing a crontab with the thing it checks dies with it, and the failure it exists to detect is
-precisely "the scheduler stopped".
-
-Delivery is configured by `ALERT_WEBHOOK_URL` — any Slack, Discord or Google Chat incoming
-webhook; the payload carries both a `text` field those render and structured fields for anything
-else. Every alert is *also* appended to `./backups/alerts.log` first, so a webhook outage cannot
-swallow the notice entirely.
-
-```bash
-pnpm ops:notify --test   # confirm it arrives where a person will actually see it
-```
+**Run these from a different machine or scheduler than the application.** A checker sharing a
+machine with the thing it checks dies with it, and the failures they exist to detect — "the
+scheduler stopped", "the host is gone" — are exactly the ones that take the checker down too.
 
 The freshness check verifies the newest dump against its recorded SHA-256 as well as its age,
 because a dump truncated by a full disk has a recent timestamp and a plausible size.
 
-What the destination cannot be is a log file nobody opens. **Until `ALERT_WEBHOOK_URL` points at
-somewhere a human reads, the alerting is a mechanism and not a safety net.**
+---
+
+## Where alerts go
+
+Telegram is the intended human-visible destination for the pilot: the owner and whoever carries
+the phone are already on it, it needs no workspace administration, and a phone notification at
+2 a.m. is the entire point.
+
+```
+TELEGRAM_BOT_TOKEN     # from @BotFather
+TELEGRAM_CHAT_ID       # the chat or channel the bot posts to
+```
+
+Both halves, or Telegram is not configured at all. `ALERT_WEBHOOK_URL` remains available for
+Slack, Discord, Google Chat or anything else that accepts a JSON POST, and both can be set at
+once.
+
+Every alert is **also** appended to `./backups/alerts.log`, first and always, so an outage at the
+destination cannot swallow the notice it was reporting.
+
+```bash
+pnpm ops:notify --test   # exits non-zero unless a *person* was actually reached
+```
+
+That exit code is deliberate. It used to be satisfied by the local file write, which always
+succeeds — so the test passed on a machine with no destination configured at all, which is
+precisely the state it exists to detect. A test that cannot fail is not a test.
+
+### Why Telegram has its own adapter
+
+It does not fit the generic webhook, and forcing it would have been the wrong kind of clever:
+
+- `sendMessage` **requires a `chat_id`**. The generic sink posts `{text, ...alert}` and has
+  nowhere to put one, so an authenticated request would be rejected for a missing field.
+- The bot token is a **path segment** of the request URL. Reusing `ALERT_WEBHOOK_URL` would mean
+  keeping a bot token in a variable that gets pasted into runbooks and issue reports.
+
+So `AlertSink` has three implementations — file, webhook, Telegram — each responsible for its own
+request shape, its own success test, and for describing itself in a way that is safe to print.
+Nothing that reaches a cron log or an evidence report ever contains a token, a full URL or a
+recipient address; the Telegram sink identifies itself as `telegram (chat …7890)`, which is
+enough to tell two configured destinations apart and no more.
+
+Messages are sent as **plain text with no `parse_mode`**. Telegram's MarkdownV2 requires escaping
+`_ * [ ] ( ) ~ \` > # + - = | { } . !`, and an unescaped one is a 400 rather than a formatting
+glitch. Alert details carry file paths, exit codes and `pg_dump` output, which are full of
+exactly those characters. An alert that fails to send because a hyphen appeared in an error
+message is worse than an alert without bold text.
+
+**Until `pnpm ops:notify --test` has actually arrived on somebody's phone, the alerting is a
+mechanism and not a safety net.** That is a launch-gate item, not a nicety.
 
 ---
 

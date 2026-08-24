@@ -18,6 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:smoke:staging": "playwright test --project desktop",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:generate": "prisma generate",
@@ -28,6 +29,7 @@
     "verify": "pnpm run typecheck && pnpm run lint && pnpm run test",
     "seed:volume": "tsx prisma/seed-volume.ts",
     "test:perf": "vitest run --project integration tests/integration/dashboard-performance.test.ts",
+    "test:storage": "vitest run --project integration tests/integration/storage-contract.test.ts tests/integration/evidence-lifecycle.test.ts tests/security/evidence-boundary.test.ts",
     "admin:create-organization": "tsx scripts/create-organization.ts",
     "admin:import": "tsx --require ./scripts/server-only-stub.cjs scripts/import.ts",
     "ops:verify-migrations": "tsx scripts/verify-migrations.ts",
@@ -39,6 +41,7 @@
     "ci": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build",
     "ops:notify": "tsx scripts/notify.ts",
     "ops:check-backup-freshness": "tsx scripts/check-backup-freshness.ts",
+    "ops:check-readiness": "tsx scripts/check-readiness.ts",
     "ops:maintenance": "tsx scripts/maintenance-mode.ts"
   },
   "prisma": {

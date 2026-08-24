@@ -2,6 +2,7 @@ import 'server-only';
 import { config } from '@/platform/config';
 import { currentRequestContext, newCorrelationId } from './correlation';
 import { log } from './logger';
+import { SentryErrorReporter, parseSentryDsn } from './sentry';
 
 /**
  * Error reporting, behind an adapter.
@@ -60,26 +61,33 @@ class LoggingErrorReporter implements ErrorReporter {
 }
 
 /**
- * The shape a real provider would take.
+ * A DSN that is configured but is not one this build knows how to send to.
  *
- * Not wired to a vendor SDK, and deliberately so: adding a dependency and a network call that
- * cannot be exercised from here would be building an integration on faith. What is real is the
- * seam, the redaction, and the fact that switching to a provider is one class.
+ * It logs and says so once per process rather than silently doing nothing. Setting a DSN is an
+ * explicit act by an operator who then expects reports to arrive somewhere; a configuration that
+ * quietly has no effect is how a team discovers, during an incident, that six months of errors
+ * went nowhere.
  */
 class ForwardingErrorReporter implements ErrorReporter {
   readonly name = 'forwarding';
+
+  private warned = false;
 
   constructor(private readonly dsn: string) {}
 
   report(error: ReportedError): void {
     // Always logs first, so an outage at the error service does not lose the error.
     new LoggingErrorReporter().report(error);
-    log.debug({
-      event: 'error_reporting.forward_pending',
-      correlationId: error.correlationId,
-      // The DSN's host only. A DSN commonly embeds a key in its userinfo.
-      destination: safeHost(this.dsn),
-    });
+
+    if (!this.warned) {
+      this.warned = true;
+      log.warn({
+        event: 'error_reporting.unsupported_dsn',
+        // The DSN's host only. A DSN commonly embeds a key in its userinfo.
+        destination: safeHost(this.dsn),
+        detail: 'ERROR_REPORTING_DSN is set but is not a Sentry DSN. Reports are logged only.',
+      });
+    }
   }
 }
 
@@ -112,14 +120,30 @@ export function errorReporter(): ErrorReporter {
    * readable configuration there is no DSN to forward to anyway, and a structured log line is
    * exactly the right destination.
    */
-  let dsn: string | undefined;
+  let settings: ReturnType<typeof config>;
   try {
-    dsn = config().ERROR_REPORTING_DSN;
+    settings = config();
   } catch {
     return new LoggingErrorReporter();
   }
 
-  cached = dsn ? new ForwardingErrorReporter(dsn) : new LoggingErrorReporter();
+  const dsn = settings.ERROR_REPORTING_DSN;
+  if (!dsn) {
+    cached = new LoggingErrorReporter();
+    return cached;
+  }
+
+  const sentry = parseSentryDsn(dsn);
+  cached = sentry
+    ? new SentryErrorReporter(sentry, {
+        environment: settings.APP_ENV,
+        // The release is the commit. It is what makes "this error started with that deploy" a
+        // question Sentry can answer, and it is the same value `/api/version` reports — so a
+        // report and a support call agree on what was running.
+        release: settings.BUILD_SHA,
+      })
+    : new ForwardingErrorReporter(dsn);
+
   return cached;
 }
 
