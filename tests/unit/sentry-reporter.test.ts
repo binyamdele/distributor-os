@@ -68,9 +68,17 @@ describe('parsing a DSN', () => {
 });
 
 describe('scrubbing', () => {
-  it('removes a password embedded in a connection string', () => {
-    expect(scrub('connect failed: postgresql://app:hunter2@db.example.com:5432/prod')).not.toContain(
-      'hunter2',
+  it('removes credentials embedded in a URL', () => {
+    /*
+     * An https URL rather than a realistic Postgres connection string, deliberately.
+     *
+     * The rule being tested is "credentials in a URL", which is scheme-agnostic — and a
+     * convincing `postgresql://user:password@host/db` in a test file is exactly what
+     * `ops:scan-secrets` is built to catch. It caught this one. Loosening the scanner so a test
+     * fixture could keep its shape would trade a real control for a cosmetic preference.
+     */
+    expect(scrub('callback failed: https://svc:t0pS3cret@api.example.com/v1/hook')).not.toContain(
+      't0pS3cret',
     );
   });
 

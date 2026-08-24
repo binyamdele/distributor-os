@@ -33,6 +33,7 @@
     "admin:create-organization": "tsx scripts/create-organization.ts",
     "admin:import": "tsx --require ./scripts/server-only-stub.cjs scripts/import.ts",
     "ops:verify-migrations": "tsx scripts/verify-migrations.ts",
+    "ops:provision-role": "tsx scripts/provision-app-role.ts",
     "ops:verify-deployment": "tsx scripts/verify-deployment.ts",
     "ops:backup": "tsx scripts/backup.ts",
     "ops:restore-drill": "tsx scripts/restore-drill.ts",

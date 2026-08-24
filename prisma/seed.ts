@@ -314,6 +314,34 @@ const ADDIS_INQUIRIES: SeedInquiry[] = [
 
 const auditSequence = new Map<string, bigint>();
 
+/**
+ * The next audit sequence for an organization, asked of the database rather than remembered.
+ *
+ * There are two allocators writing to this counter during a seed: this function, and the real
+ * audit service that the payment, fulfilment and exception seed modules go through. Priming an
+ * in-memory map once at startup was correct only until the second allocator wrote something —
+ * after which the map was stale, and re-seeding an already-populated database collided on
+ * `(organization_id, sequence)` partway through.
+ *
+ * It surfaced as a failed seed inside the end-to-end suite's global setup, which reported it as
+ * twenty-nine unrelated browser failures. Reading the current maximum each time costs one query
+ * per audit row in a development-only script, and removes the class of bug entirely.
+ */
+async function nextAuditSequence(organizationId: string): Promise<bigint> {
+  const highest = await prisma.auditEvent.aggregate({
+    where: { organizationId },
+    _max: { sequence: true },
+  });
+
+  // The map still matters: two calls in the same tick would otherwise read the same maximum.
+  const remembered = auditSequence.get(organizationId) ?? 0n;
+  const stored = highest._max.sequence ?? 0n;
+  const next = (stored > remembered ? stored : remembered) + 1n;
+
+  auditSequence.set(organizationId, next);
+  return next;
+}
+
 async function recordSeedAudit(
   organizationId: string,
   action: string,
@@ -321,8 +349,7 @@ async function recordSeedAudit(
   entityId: string,
   newState: Prisma.InputJsonValue,
 ): Promise<void> {
-  const next = (auditSequence.get(organizationId) ?? 0n) + 1n;
-  auditSequence.set(organizationId, next);
+  const next = await nextAuditSequence(organizationId);
   await prisma.auditEvent.create({
     data: {
       organizationId,
@@ -487,14 +514,9 @@ async function seedOrganization(
 async function main(): Promise<void> {
   const passwordHash = await hashPassword(DEMO_PASSWORD);
 
-  // Re-seeding continues the audit sequence rather than restarting it.
-  for (const organizationId of [ADDIS, RIFT]) {
-    const highest = await prisma.auditEvent.aggregate({
-      where: { organizationId },
-      _max: { sequence: true },
-    });
-    auditSequence.set(organizationId, highest._max.sequence ?? 0n);
-  }
+  // The audit sequence is read from the database per row now — see nextAuditSequence — so there
+  // is nothing to prime here. Priming once was the bug: it went stale the moment another
+  // allocator wrote an event.
 
   await seedOrganization(
     ADDIS,

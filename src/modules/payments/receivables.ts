@@ -102,13 +102,36 @@ export async function receivables(
    *
    * CANCELLED is still excluded: nothing is owed on an order that never happened.
    */
+  /*
+   * Every open and completed order, with no cap.
+   *
+   * There used to be a `take: 500` here, and it was quietly wrong in three compounding ways.
+   *
+   * It had no `orderBy`, so it was not "the 500 most urgent" — it was an arbitrary 500. It was
+   * applied *before* the settled-order filter below, so most of those 500 could be fully paid
+   * and drop out, leaving a collections list far shorter than 500 while genuinely unpaid orders
+   * were never considered at all. And the page's total is summed from these rows, so past 500
+   * orders it under-reported what customers owed — in the one direction a distributor would
+   * never catch, because a smaller debt figure looks like good news.
+   *
+   * The dashboard's own receivables panel has always summed every order. The two disagreed as
+   * soon as the order count passed 500, which is what an end-to-end test caught: ETB 8,035,152.50
+   * on the dashboard against ETB 7,826,715.00 on the page it links to. An owner who sees two
+   * different figures for "outstanding" stops believing both.
+   *
+   * Unbounded is the right answer at pilot scale — one distributor, and the dashboard already
+   * reads the same set on every request. It is not the right answer forever: both this and
+   * `receivablesTotals` will need aggregation in SQL before a few years of orders make loading
+   * them per request expensive. The fix then is a summed query plus a paginated list, and the
+   * property to preserve is the one broken here — **the total must cover every row, whatever the
+   * list happens to show.**
+   */
   const orders = await tx.salesOrder.findMany({
     where: { status: { in: ['OPEN', 'COMPLETED'] } },
     include: {
       customer: { select: { id: true, companyName: true, phone: true } },
       payments: { where: { status: 'CONFIRMED' }, select: { amountConfirmedMinor: true } },
     },
-    take: 500,
   });
 
   const rows = orders

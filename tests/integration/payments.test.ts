@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { withTenant } from '@/platform/db';
 import { cancelOrder } from '@/modules/orders';
@@ -17,6 +18,7 @@ import {
   submitPayment,
 } from '@/modules/payments';
 import { MockPaymentExtractor, buildMockEvidence } from '@/platform/payments';
+import { receivablesTotals } from '@/modules/reporting';
 import { owner, resetDatabase, seedOrg } from '../support/fixtures';
 import {
   type MemoryFileStore,
@@ -1206,5 +1208,84 @@ describe('receivables', () => {
 
     const rows = await withTenant(org.organizationId, (tx) => receivables(tx));
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe('the receivables total and the dashboard figure', () => {
+  let org: Awaited<ReturnType<typeof seedOrg>>;
+
+  beforeEach(async () => {
+    await resetDatabase();
+    store = useMemoryFileStore();
+    org = await seedOrg('Addis Build Supply', 'OWNER_ADMIN');
+  });
+
+  /**
+   * The two must agree, at any number of orders.
+   *
+   * They did not. `receivables()` capped its query at 500 orders — with no ordering, and before
+   * settled orders were filtered out — while the dashboard's `receivablesTotals()` summed every
+   * one. Past 500 orders the collections page under-reported what customers owed, and a
+   * genuinely unpaid order could be missing from the list entirely.
+   *
+   * It went unnoticed because it needs 500 orders to appear, which no test had, and because it
+   * fails in the direction nobody questions: a smaller debt figure looks like good news.
+   *
+   * Cloning one real order is deliberate — the row is whatever the actual workflow produces,
+   * rather than a hand-built fixture that could drift from it.
+   */
+  it('agree past the old 500-order cap', async () => {
+    const seed = await openOrder(org.organizationId, org.context, {
+      paymentType: 'CREDIT',
+      paymentTermsDays: 30,
+    });
+
+    const original = await owner.salesOrder.findUniqueOrThrow({ where: { id: seed.orderId } });
+    const sourceQuotation = await owner.quotation.findUniqueOrThrow({
+      where: { id: original.quotationId },
+    });
+
+    /*
+     * One quotation per order, because the schema enforces exactly that with a unique index —
+     * an order cannot be created twice from the same quotation, which is a Phase 4 guarantee
+     * worth not working around even in a fixture.
+     */
+    const CLONES = 540;
+    const quotationIds = Array.from({ length: CLONES }, () => randomUUID());
+
+    await owner.quotation.createMany({
+      data: quotationIds.map((id, index) => ({
+        ...sourceQuotation,
+        id,
+        quotationNumber: `QU-CAP-${String(index).padStart(5, '0')}`,
+        createdAt: undefined,
+        updatedAt: undefined,
+      })) as never,
+    });
+
+    await owner.salesOrder.createMany({
+      data: quotationIds.map((quotationId, index) => ({
+        ...original,
+        id: randomUUID(),
+        quotationId,
+        orderNumber: `SO-CAP-${String(index).padStart(5, '0')}`,
+        createdAt: undefined,
+        updatedAt: undefined,
+      })) as never,
+    });
+
+    const rows = await withTenant(org.organizationId, (tx) => receivables(tx));
+    const totals = await withTenant(org.organizationId, (tx) =>
+      receivablesTotals(tx, 'Africa/Addis_Ababa', new Date()),
+    );
+
+    // Every order is a receivable here: none of them has a confirmed payment.
+    expect(rows.length).toBe(CLONES + 1);
+
+    const pageTotal = rows.reduce((sum, row) => sum + row.outstandingMinor, 0n);
+    // The figure the owner sees on the collections page, and the one on the dashboard that links
+    // to it. Two different numbers for "outstanding" is how an owner stops believing both.
+    expect(pageTotal).toBe(totals.outstandingMinor);
+    expect(pageTotal).toBe(original.grandTotalMinor * BigInt(CLONES + 1));
   });
 });

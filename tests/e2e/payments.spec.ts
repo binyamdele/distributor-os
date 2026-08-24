@@ -261,10 +261,47 @@ test.describe('receivables', () => {
 
 test.describe('who may see payment evidence', () => {
   test('sales cannot open the queue, the review screen or a file', async ({ page }) => {
-    // Find a real evidence id as finance, then try to use it as someone who may not.
+    /*
+     * This test uploads its own bank slip rather than borrowing one from the queue.
+     *
+     * It used to take the first row of `/payments` and read its evidence link. That worked on a
+     * freshly seeded database and degraded quietly: every run confirms or rejects some of the
+     * seeded payments, so the queue drains of the ones that *have* evidence, and eventually the
+     * first row is a payment with none. The link never appears, and a permission test fails with
+     * a sixty-second timeout that says nothing about permissions.
+     *
+     * Owning the data removes the dependency on what previous runs happened to leave behind —
+     * and it adds the upload path to the end-to-end suite, which had no coverage of it at all:
+     * every other evidence assertion in this file is about a payment the seed created.
+     */
+    await signIn(page, 'sales@addisbuild.example');
+    const order = await cashOrder(page, 6);
+    await page.goto(order.url);
+
+    const amount = await prefilledAmount(page);
+    const reference = `E2E-EVIDENCE-${Date.now()}`;
+    await page.getByLabel('Transaction reference').fill(reference);
+    await page.getByLabel('Name on the payment').fill('ABC Construction PLC');
+
+    // A real PDF, by its magic bytes — the validator reads the content, not the filename.
+    await page.getByLabel('Receipt or screenshot').setInputFiles({
+      name: 'slip.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from(`%PDF-1.4\n% synthetic slip for ${amount}\n%%EOF\n`, 'utf8'),
+    });
+    await page.getByTestId('submit-payment-button').click();
+    await expect(page.getByTestId('order-payment')).toHaveCount(1);
+
+    // Now read that evidence id as finance, who may.
+    //
+    // Selected by its reference rather than by position: the queue holds whatever previous runs
+    // left behind, including payments submitted with no evidence at all, so "the first row" is
+    // not this test's payment and may have no evidence link to read.
     await signIn(page, 'finance@addisbuild.example');
     await page.goto('/payments');
-    await page.getByTestId('payment-row').first().getByRole('link').click();
+    const queued = page.getByTestId('payment-row').filter({ hasText: reference });
+    await expect(queued).toHaveCount(1);
+    await queued.getByRole('link').click();
     const evidenceHref = await page.getByTestId('evidence-link').getAttribute('href');
     expect(evidenceHref).toBeTruthy();
     const reviewUrl = page.url();
