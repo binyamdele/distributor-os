@@ -10,13 +10,13 @@ that a VM and a disk are infrastructure.
 
 ## 1. What is deliberately not used
 
-| Supabase feature | Why not |
-|---|---|
-| Supabase Auth | Sessions, RBAC and the five roles are the product's own, tested across seven phases. Two identity systems is one too many, and the second one always ends up authoritative by accident |
-| Client-side database access | Every query would leave the server, and the tenancy guarantee would move from the application to a set of policies written in someone else's dialect |
-| PostgREST for business logic | Order acceptance takes row locks in a specific order to make concurrent reservations safe. That is not expressible as REST over tables |
-| Supabase's RLS conventions | The existing policies are `FORCE`d, enumerated by a schema-coverage test, and depend on `app.organization_id`. Rewriting them to a different convention would mean re-proving the whole tenancy story for no gain |
-| Supabase Storage RLS | Meaningless here — see §4. The application is the boundary |
+| Supabase feature             | Why not                                                                                                                                                                                                           |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Supabase Auth                | Sessions, RBAC and the five roles are the product's own, tested across seven phases. Two identity systems is one too many, and the second one always ends up authoritative by accident                            |
+| Client-side database access  | Every query would leave the server, and the tenancy guarantee would move from the application to a set of policies written in someone else's dialect                                                              |
+| PostgREST for business logic | Order acceptance takes row locks in a specific order to make concurrent reservations safe. That is not expressible as REST over tables                                                                            |
+| Supabase's RLS conventions   | The existing policies are `FORCE`d, enumerated by a schema-coverage test, and depend on `app.organization_id`. Rewriting them to a different convention would mean re-proving the whole tenancy story for no gain |
+| Supabase Storage RLS         | Meaningless here — see §4. The application is the boundary                                                                                                                                                        |
 
 **Prisma, the 18 existing migrations, `distributor_app`, `FORCE` RLS, the custom RBAC and the
 transaction/row-lock architecture are unchanged.** Nothing in the codebase names Supabase; it is
@@ -27,19 +27,35 @@ makes it swappable for any managed PostgreSQL and any S3-compatible bucket.
 
 ## 2. Connection roles
 
+### Provisioning the role
+
+```bash
+APP_DB_PASSWORD=… DIRECT_URL=… pnpm ops:provision-role
+```
+
+Idempotent, and safe to re-run. It creates the role if absent, asserts `NOSUPERUSER` and
+`NOBYPASSRLS` **every run** rather than only at creation, grants connect/schema/table/sequence
+rights, and — the one that is invisible when forgotten — sets `ALTER DEFAULT PRIVILEGES` so
+tables created by _future_ migrations are covered without another grant.
+
+Before this existed, those grants lived only in the Docker volume’s one-time init script. A
+managed database has no such hook, so provisioning a new environment meant typing them correctly
+from memory, and a missed default-privilege grant stays invisible until some later migration adds
+a table that the application then cannot read.
+
 Two connections, and the separation is the tenancy guarantee rather than a convention.
 
-| Setting | Role | Used by |
-|---|---|---|
-| `DATABASE_URL` | `distributor_app` — `LOGIN`, `NOSUPERUSER`, `NOBYPASSRLS`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION` | The application, always |
-| `DIRECT_URL` | Supabase admin/migration role | `prisma migrate deploy`, `ops:backup`. Never the runtime |
+| Setting        | Role                                                                                                     | Used by                                                  |
+| -------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `DATABASE_URL` | `distributor_app` — `LOGIN`, `NOSUPERUSER`, `NOBYPASSRLS`, `NOCREATEDB`, `NOCREATEROLE`, `NOREPLICATION` | The application, always                                  |
+| `DIRECT_URL`   | Supabase admin/migration role                                                                            | `prisma migrate deploy`, `ops:backup`. Never the runtime |
 
 RLS policies do not apply to a superuser, and `BYPASSRLS` is exactly what it sounds like. A
 deployment that connects with the admin string has **no tenant isolation whatsoever** and behaves
 identically in every other respect — every page renders, every test passes, and every
 organization can read every other's data.
 
-That is why `ops:verify-deployment` connects with the *application's* connection string and
+That is why `ops:verify-deployment` connects with the _application's_ connection string and
 asserts the role's attributes directly. A verification run as the admin would pass while the
 application ran as something else entirely.
 
@@ -78,24 +94,24 @@ pnpm test:storage
 That runs the storage contract suite, the application evidence lifecycle and the boundary checks
 — 42 assertions covering every capability the application uses:
 
-| Capability | Where it is used | What the suite asserts |
-|---|---|---|
-| Path-style addressing | Required by Supabase and MinIO; `S3_FORCE_PATH_STYLE=true` | Every operation, implicitly — nothing works without it |
-| `PutObject` with user metadata | Evidence upload; the content hash travels with the object | The hash comes back from a later `HeadObject` unchanged |
-| `HeadObject` | `getMetadata` | Size and hash without downloading the object |
-| `GetObject` | The authenticated read route | Bytes are byte-identical, including binary PNG/JPEG |
-| `DeleteObject` | Retention | The object is gone afterwards, and deleting a missing one is not an error |
-| `HeadBucket` | `health()`, which readiness depends on | Reachable is reported as reachable; wrong credentials as `unauthorized`; a missing bucket as `missing-bucket` |
-| Missing-key behaviour | Every read | `null`, not an exception — the local store and S3 must agree |
-| Malformed-key behaviour | Defence in depth | `null` without a network call |
-| Timeout behaviour | A provider that stops answering | Bounded, and reported as `timeout` rather than hanging |
+| Capability                     | Where it is used                                           | What the suite asserts                                                                                        |
+| ------------------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Path-style addressing          | Required by Supabase and MinIO; `S3_FORCE_PATH_STYLE=true` | Every operation, implicitly — nothing works without it                                                        |
+| `PutObject` with user metadata | Evidence upload; the content hash travels with the object  | The hash comes back from a later `HeadObject` unchanged                                                       |
+| `HeadObject`                   | `getMetadata`                                              | Size and hash without downloading the object                                                                  |
+| `GetObject`                    | The authenticated read route                               | Bytes are byte-identical, including binary PNG/JPEG                                                           |
+| `DeleteObject`                 | Retention                                                  | The object is gone afterwards, and deleting a missing one is not an error                                     |
+| `HeadBucket`                   | `health()`, which readiness depends on                     | Reachable is reported as reachable; wrong credentials as `unauthorized`; a missing bucket as `missing-bucket` |
+| Missing-key behaviour          | Every read                                                 | `null`, not an exception — the local store and S3 must agree                                                  |
+| Malformed-key behaviour        | Defence in depth                                           | `null` without a network call                                                                                 |
+| Timeout behaviour              | A provider that stops answering                            | Bounded, and reported as `timeout` rather than hanging                                                        |
 
 ### Server-side encryption
 
 **Leave `S3_SERVER_SIDE_ENCRYPTION` unset.** The adapter sends no encryption header by default,
 and that default was earned: an earlier version sent `AES256` unconditionally on the assumption
 that a provider without support would ignore it. MinIO refuses the upload outright — "KMS is not
-configured" — which would have failed *every* evidence upload.
+configured" — which would have failed _every_ evidence upload.
 
 Supabase encrypts at rest as a property of the platform, so there is nothing to ask for. Set the
 flag only for a provider that demands the header explicitly.
@@ -156,14 +172,14 @@ pnpm ops:backup --label staging --container distributor-os-postgres
 ```
 
 The behaviour: the script decides what to dump from the **host in the connection string**. A
-loopback host means the container *is* the database; anything else means the container is only
+loopback host means the container _is_ the database; anything else means the container is only
 being borrowed as a client and the full connection string is passed through — including
 `sslmode=require`, without which a managed provider refuses the connection.
 
 That distinction was a defect, and a quiet one. The previous version always discarded the host
 and dumped whatever the local container held. Point `DIRECT_URL` at Supabase, pass `--container`
 because the host has no `pg_dump`, and it would usually fail on an unknown role — but where the
-local container happened to have a role and database of the same names, it *succeeded*, and wrote
+local container happened to have a role and database of the same names, it _succeeded_, and wrote
 the wrong database out under a filename and checksum implying it was the staging backup.
 
 Dumps are scoped to `--schema=public`. On a managed provider the database is shared with the
@@ -180,7 +196,7 @@ content hash; the bytes are in the bucket. Restore the database alone and every 
 points at a file that may no longer exist — and the one thing a payment dispute turns on is the
 slip.
 
-For the pilot, the proportionate arrangement is a scheduled copy to a *second* private
+For the pilot, the proportionate arrangement is a scheduled copy to a _second_ private
 destination, in a different account or provider:
 
 ```bash
@@ -214,25 +230,25 @@ pnpm ops:restore-drill --dump ./backups/<file>.dump --container <container>
 It verifies the dump against its recorded checksum first, restores into an isolated scratch
 database it drops afterwards, compares 23 business facts spanning every phase, and then checks
 every referenced evidence file for presence and hash. **A restore into the same environment is
-not the drill the gate requires** — the gate requires restoring into a *separate* environment,
+not the drill the gate requires** — the gate requires restoring into a _separate_ environment,
 which needs a second project or host that does not yet exist.
 
 ---
 
 ## 6. What is verified, and by what
 
-| | Verified by |
-|---|---|
-| Migrations applied, none pending | `ops:verify-deployment`, over the application's own connection |
-| Runtime role is `distributor_app`, not superuser, no `BYPASSRLS` | as above |
-| RLS enabled *and* `FORCE`d on all 26 tenant tables | as above |
-| Append-only grants revoked | as above |
-| Liveness, readiness, served commit, environment | as above |
-| HTTPS | as above — a loopback address is exempt and says so |
-| Storage: every capability the application uses | `pnpm test:storage` against the staging endpoint |
-| Evidence lifecycle through the application | included in the above |
-| Bucket privacy, no client-side credentials | included in the above |
-| Alert destinations configured | reported by `ops:verify-deployment`; delivery proved by `ops:notify --test` |
+|                                                                  | Verified by                                                                 |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Migrations applied, none pending                                 | `ops:verify-deployment`, over the application's own connection              |
+| Runtime role is `distributor_app`, not superuser, no `BYPASSRLS` | as above                                                                    |
+| RLS enabled _and_ `FORCE`d on all 26 tenant tables               | as above                                                                    |
+| Append-only grants revoked                                       | as above                                                                    |
+| Liveness, readiness, served commit, environment                  | as above                                                                    |
+| HTTPS                                                            | as above — a loopback address is exempt and says so                         |
+| Storage: every capability the application uses                   | `pnpm test:storage` against the staging endpoint                            |
+| Evidence lifecycle through the application                       | included in the above                                                       |
+| Bucket privacy, no client-side credentials                       | included in the above                                                       |
+| Alert destinations configured                                    | reported by `ops:verify-deployment`; delivery proved by `ops:notify --test` |
 
 Nothing in that table is satisfied by reading a dashboard. Each row is a command that either
 passes or does not.

@@ -17,17 +17,18 @@ FORCE RLS are live there rather than only on a laptop.
 That moves two gates and creates one that did not exist before: the staging credentials were
 exposed during manual setup, and rotating them is now a precondition rather than hygiene.
 
-| Gate | Status |
-|---|---|
-| Real managed PostgreSQL | **VERIFIED** |
-| Restricted runtime role · FORCE RLS | **VERIFIED** |
-| S3-compatible evidence storage | **VERIFIED** against a real S3 server; the same suite is the staging evidence |
-| Application evidence lifecycle | **VERIFIED** end to end against a real object store |
-| Persistent cloud container host | **BLOCKED** — no host, no account |
-| Restore into a separate environment | **BLOCKED** — needs a second environment |
-| Human-visible alert destination | **BLOCKED** — Telegram adapter built and tested; no bot delivered a message yet |
-| Credential rotation | **REQUIRED BEFORE REAL DATA** |
-| Sentry ingestion | **BLOCKED** — adapter implemented, no DSN |
+| Gate                                | Status                                                                          |
+| ----------------------------------- | ------------------------------------------------------------------------------- |
+| Real managed PostgreSQL             | **VERIFIED**                                                                    |
+| Restricted runtime role · FORCE RLS | **VERIFIED**                                                                    |
+| S3-compatible evidence storage      | **VERIFIED** against a real S3 server; the same suite is the staging evidence   |
+| Application evidence lifecycle      | **VERIFIED** end to end against a real object store                             |
+| Persistent cloud container host     | **BLOCKED** — no host, no account                                               |
+| Restore into a separate environment | **BLOCKED** — needs a second environment                                        |
+| Human-visible alert destination     | **BLOCKED** — Telegram adapter built and tested; no bot delivered a message yet |
+| Reproducible app-role provisioning  | **VERIFIED** — it did not exist before; see gate 4b                             |
+| Credential rotation                 | **REQUIRED BEFORE REAL DATA**                                                   |
+| Sentry ingestion                    | **BLOCKED** — adapter implemented, no DSN                                       |
 
 ### Who verified what, and how to reproduce it
 
@@ -41,7 +42,7 @@ Supabase S3 file store reports healthy.
 **Verified here, reproducibly:** everything the commands below assert, against real PostgreSQL 17
 and a real S3-compatible object store.
 
-Those operator checks are not taken on trust — they are now *executable*, and the same commands
+Those operator checks are not taken on trust — they are now _executable_, and the same commands
 produce the same evidence against Supabase from any machine holding the credentials:
 
 ```bash
@@ -60,7 +61,7 @@ Until those have been run against the staging host and their output recorded, th
 ### **BLOCKED** — and the reason is now narrower than it was
 
 **The infrastructure half is done.** Managed PostgreSQL 17 and a private S3-compatible bucket
-exist, are provisioned, and the application runs against both. What is missing is a *host*: a
+exist, are provisioned, and the application runs against both. What is missing is a _host_: a
 place where the container runs continuously, at a domain, with TLS, that survives a laptop being
 closed.
 
@@ -219,7 +220,7 @@ interchangeable rather than merely both present.
 
 ### The application path, not just the adapter
 
-The adapter was proven in isolation. The *application* on top of it was not: every test that
+The adapter was proven in isolation. The _application_ on top of it was not: every test that
 touches evidence ran against an in-memory Map, so the sequence a distributor actually depends on
 — a bank slip leaving a browser, landing in a bucket, coming back byte-identical through an
 authenticated route — had never been exercised against a store that can fail.
@@ -289,7 +290,7 @@ It verifies the dump against its recorded checksum first, so a corrupt backup fa
 rather than the emergency, and it restores into a scratch database it drops afterwards, so the
 live one is never written to.
 
-**One precision about the evidence half.** Those 512 files were verified in the *local* store,
+**One precision about the evidence half.** Those 512 files were verified in the _local_ store,
 because that is where this database's historical evidence was written across Phases 5–8. The
 check itself is store-agnostic — it goes through the same `FileStore` interface — and the
 property it depends on is now asserted against S3 directly: a test replaces an object's bytes
@@ -307,7 +308,7 @@ the connection string and dumped whatever the local container held — correct i
 where the URL names a port Docker publishes on the host. Point `DIRECT_URL` at Supabase, pass
 `--container` because the machine has no `pg_dump`, and it would usually fail on an unknown
 role — but where the local container happened to have a role and database of the same names,
-which a stock `postgres` image gives you, it *succeeded* and wrote the wrong database out under
+which a stock `postgres` image gives you, it _succeeded_ and wrote the wrong database out under
 a filename and checksum implying it was the staging backup. A backup of the wrong database is
 worse than no backup: it restores cleanly, and the mistake surfaces only when somebody looks for
 a row that was never in it. The host now decides, and a remote host is passed through:
@@ -467,6 +468,34 @@ failure it exists to catch.
 
 ---
 
+## Gate 4b — Provisioning the application role
+
+### **VERIFIED (mechanism)** — and it was missing entirely
+
+The role that makes tenancy real, `distributor_app`, was **not provisioned by anything in this
+repository**. Its `CONNECT`, schema `USAGE`, table and sequence grants — and the
+`ALTER DEFAULT PRIVILEGES` that covers tables created by _future_ migrations — lived only in
+`docker/init-test-db.sql`, which Postgres runs once when a Docker volume is first initialised.
+
+Managed PostgreSQL has no `docker-entrypoint-initdb.d`. So setting up the Supabase staging
+project meant typing those grants by hand, correctly, from memory — and the most forgettable one
+is the one whose absence is invisible: without the default privileges, a table added by some
+later migration is unreadable by the application while everything else keeps working.
+
+It surfaced locally in the ugliest possible way. `pnpm db:reset` drops and recreates schema
+`public`, which takes the grants with it; the migrations replayed, every table came back, and
+the application answered `permission denied for schema public` on every page. It presented as
+twenty-nine unrelated end-to-end failures.
+
+`pnpm ops:provision-role` now does it idempotently against any database, asserts
+`NOSUPERUSER NOBYPASSRLS` every run rather than only at creation, and prints what it ended up
+with. `pnpm db:reset` re-runs it, so that command can no longer leave a database the
+application cannot use.
+
+**This is a prerequisite for any new environment**, including the second one gate 3 needs.
+
+---
+
 ## Gate 5 — Credential rotation
 
 ### **REQUIRED BEFORE REAL DATA**
@@ -489,7 +518,7 @@ pnpm ops:verify-deployment --base-url https://<staging-host> --expect-env stagin
 pnpm test:storage     # TEST_S3_* pointed at the new key pair
 ```
 
-Readiness green *after* a rotation is the only evidence the new credentials work. Readiness green
+Readiness green _after_ a rotation is the only evidence the new credentials work. Readiness green
 before one proves nothing about it. Procedure in
 [`secrets-and-environment.md`](secrets-and-environment.md) §4.
 
@@ -532,18 +561,19 @@ logs a warning once and falls back to logging, rather than silently discarding r
 
 ## Supporting gates
 
-| | Status | Evidence |
-|---|---|---|
-| Staging E2E green | **READY** | 193 specs pass, desktop and mobile — **run against the containerised production build**, not a dev server |
-| Full test suite | **READY** | 1,481 passed, 1 skipped, 44 files — integration against real PostgreSQL 17 and real MinIO |
-| Deployment failure rehearsal | **READY** | 10 refused configurations, each exiting 1 and serving nothing, each naming the setting and not its value |
+|                                                | Status    | Evidence                                                                                                                                                                                                                                                                                                           |
+| ---------------------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Staging E2E green                              | **READY** | 193 pass, 7 skipped, 0 failed, desktop and mobile — and separately against the containerised production build                                                                                                                                                                                                      |
+| Full test suite                                | **READY** | 1,514 passed, 2 skipped, 48 files — integration against real PostgreSQL 17 and a real S3-compatible store                                                                                                                                                                                                          |
+| Migration replay on a fresh database           | **READY** | All 18 replay; RLS enabled _and_ forced, role attributes, append-only grants, 3 immutability triggers, 26 policies                                                                                                                                                                                                 |
+| Deployment failure rehearsal                   | **READY** | 10 refused configurations, each exiting 1 and serving nothing, each naming the setting and not its value                                                                                                                                                                                                           |
 | Transactional smoke, pointable at a deployment | **READY** | `PLAYWRIGHT_BASE_URL=… pnpm test:smoke:staging` runs the suite against a running host without starting a local server. **It writes** — customers, stock, payments — and refuses `APP_ENV=production` before collecting a test. `ops:verify-deployment` is the read-only one; they are separate commands on purpose |
-| Storage suite, pointable at any provider | **READY** | `pnpm test:storage` — 42 assertions; `TEST_S3_*` aims it at Supabase |
-| DB role / RLS verified | **READY** | Against the running container's own connection: `distributor_app`, not superuser, no BYPASSRLS, RLS enabled *and* forced on all 26 tenant tables, append-only grants revoked, 0 unfinished migrations |
-| No P0 security findings | **READY** | [`phase-9-security-review.md`](phase-9-security-review.md); 11 dependency advisories, all build/test tooling, none reachable from the container |
-| Secrets clean | **READY** | `ops:scan-secrets`: nothing found. The runtime image carries no `.env` and no secret-shaped variable — only `BUILD_SHA` and `BUILD_TIME` |
-| Readiness behaves under failure | **READY** | Production build with an unreachable bucket: liveness 200, readiness **503**, `file-store: degraded (unauthorized)`. Alive but not taking traffic, which is the correct pair |
-| Kill switch | **READY** | Writes refused, reads intact, lifted cleanly — and lifting does **not** restore UPDATE/DELETE on the append-only tables, which a naive restore would have |
+| Storage suite, pointable at any provider       | **READY** | `pnpm test:storage` — 42 assertions; `TEST_S3_*` aims it at Supabase                                                                                                                                                                                                                                               |
+| DB role / RLS verified                         | **READY** | Against the running container's own connection: `distributor_app`, not superuser, no BYPASSRLS, RLS enabled _and_ forced on all 26 tenant tables, append-only grants revoked, 0 unfinished migrations                                                                                                              |
+| No P0 security findings                        | **READY** | [`phase-9-security-review.md`](phase-9-security-review.md); 11 dependency advisories, all build/test tooling, none reachable from the container                                                                                                                                                                    |
+| Secrets clean                                  | **READY** | `ops:scan-secrets`: nothing found. The runtime image carries no `.env` and no secret-shaped variable — only `BUILD_SHA` and `BUILD_TIME`                                                                                                                                                                           |
+| Readiness behaves under failure                | **READY** | Production build with an unreachable bucket: liveness 200, readiness **503**, `file-store: degraded (unauthorized)`. Alive but not taking traffic, which is the correct pair                                                                                                                                       |
+| Kill switch                                    | **READY** | Writes refused, reads intact, lifted cleanly — and lifting does **not** restore UPDATE/DELETE on the append-only tables, which a naive restore would have                                                                                                                                                          |
 
 ---
 
@@ -554,17 +584,18 @@ logs a warning once and falls back to logging, rather than silently discarding r
 Real managed infrastructure now exists and is proven. What remains is a **host**, a **second
 environment**, a **phone**, and a **rotation**.
 
-| Gate | Status |
-|---|---|
-| 1 · Persistent cloud container host | **BLOCKED** — database and bucket are real; the application still runs where somebody starts it |
-| 2 · S3-compatible evidence storage | **VERIFIED** — adapter *and* application path, against a real object store |
-| 3 · Restore into a separate environment | **BLOCKED** — one environment cannot be a restore target for itself |
-| 4 · Human-visible alert destination | **VERIFIED** (mechanism) · **BLOCKED** (nothing has reached a phone) |
-| 5 · Credential rotation | **REQUIRED BEFORE REAL DATA** |
-| 6 · Error reporting ingestion | **BLOCKED** — adapter ready, no DSN |
+| Gate                                    | Status                                                                                          |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| 1 · Persistent cloud container host     | **BLOCKED** — database and bucket are real; the application still runs where somebody starts it |
+| 2 · S3-compatible evidence storage      | **VERIFIED** — adapter _and_ application path, against a real object store                      |
+| 3 · Restore into a separate environment | **BLOCKED** — one environment cannot be a restore target for itself                             |
+| 4 · Human-visible alert destination     | **VERIFIED** (mechanism) · **BLOCKED** (nothing has reached a phone)                            |
+| 4b · Reproducible app-role provisioning | **VERIFIED** — it did not exist at all before                                                   |
+| 5 · Credential rotation                 | **REQUIRED BEFORE REAL DATA**                                                                   |
+| 6 · Error reporting ingestion           | **BLOCKED** — adapter ready, no DSN                                                             |
 
 Three of these are one purchase away: a container host clears 1, gives 3 somewhere to restore
-*from*, and a Telegram bot takes ten minutes. Gate 5 costs nothing but must not be skipped.
+_from_, and a Telegram bot takes ten minutes. Gate 5 costs nothing but must not be skipped.
 
 ### Why the verdict stays conservative
 
@@ -572,11 +603,15 @@ The database is real and the bucket is real, which makes it tempting to treat th
 paperwork. It is not, for one reason that this task demonstrated again: **every defect found here
 was found by doing something that had previously only been written down.**
 
-Backing up against a managed database would have dumped the *wrong* database under a filename
+Backing up against a managed database would have dumped the _wrong_ database under a filename
 implying it was the staging backup — and then produced a dump that could not restore into plain
 PostgreSQL anyway. The alerting self-test passed on a machine where no alert could reach anybody.
-The error reporter sent nothing at all. None of that was visible by reading; all of it was
-visible within minutes of running the thing.
+The error reporter sent nothing at all. Nothing provisioned the database role the whole tenancy
+story depends on. And the receivables page — the list a distributor uses to decide who to chase —
+had been under-reporting what customers owed for every organization past 500 orders, disagreeing
+with the dashboard that links to it.
+
+None of that was visible by reading. All of it was visible within minutes of running the thing.
 
 The gates that remain are the ones nobody has run yet. That is precisely why a distributor's real
 data should not be present for the first attempt.
