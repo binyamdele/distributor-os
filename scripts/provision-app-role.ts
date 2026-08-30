@@ -44,22 +44,195 @@ loadEnv();
 
 const ROLE = 'distributor_app';
 
+/** Postgres truncates identifiers at NAMEDATALEN - 1. */
+const MAX_IDENTIFIER_BYTES = 63;
+
 /**
- * Postgres has no parameter binding for identifiers, and this is executed as the owner — so the
- * one thing that must never happen is a role name arriving from somewhere unexpected. It is a
- * constant above; this refuses anything that is not a plain identifier regardless, because the
- * day someone makes it configurable is the day that reasoning has to still hold.
+ * Is this character one that could break out of, or corrupt, a double-quoted identifier?
+ *
+ * A double quote would end the quoting early; a NUL terminates the string as far as libpq is
+ * concerned; the other C0 controls and DEL have no business in a role or database name and are a
+ * reliable sign that something upstream is wrong. Written as code-point comparisons rather than a
+ * regex so the source carries no literal control characters of its own.
  */
-function identifier(value: string): string {
-  if (!/^[a-z_][a-z0-9_]*$/.test(value)) {
-    throw new Error(`Refusing to use "${value}" as a SQL identifier.`);
+function isUnsafeInIdentifier(char: string): boolean {
+  const code = char.codePointAt(0) ?? 0;
+  return char === '"' || code < 0x20 || code === 0x7f;
+}
+
+/**
+ * Validates an identifier, then quotes it.
+ *
+ * Postgres has no parameter binding for identifiers, so the only safe way to interpolate one is
+ * to reject what cannot be quoted and then quote it. Everything that survives the check is
+ * wrapped in double quotes and is therefore inert.
+ *
+ * This replaces a `^[a-z_][a-z0-9_]*$` allowlist, and it is a strengthening rather than a
+ * loosening. The allowlist could not express a legitimate name containing a dot, a hyphen or a
+ * capital — while still depending on the *absence* of quoting for its safety, since it never
+ * quoted anything. This depends on the quoting, which is what actually makes a value inert.
+ */
+export function quoteIdentifier(value: string): string {
+  if (value.length === 0) {
+    throw new Error('Refusing to use an empty string as a SQL identifier.');
   }
-  return value;
+  if (Buffer.byteLength(value, 'utf8') > MAX_IDENTIFIER_BYTES) {
+    throw new Error('Refusing to use an over-long value as a SQL identifier.');
+  }
+  for (const char of value) {
+    if (isUnsafeInIdentifier(char)) {
+      throw new Error('Refusing to use a value containing a quote or control character.');
+    }
+  }
+  return `"${value}"`;
 }
 
 /** Single-quoted literal for the one place a value cannot be bound: CREATE ROLE … PASSWORD. */
-function literal(value: string): string {
+export function literal(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
+}
+
+/** Just enough of a Prisma client to run this, so it can be exercised without a database. */
+export interface SqlClient {
+  $queryRawUnsafe<T = unknown>(sql: string): Promise<T>;
+  $executeRawUnsafe(sql: string): Promise<unknown>;
+}
+
+export interface ProvisionResult {
+  readonly sessionRole: string;
+  readonly database: string;
+  readonly action: 'created' | 'rotated' | 'unchanged';
+}
+
+/**
+ * The grants, in the order they are applied.
+ *
+ * Split out so the statements can be inspected without a database. `owner` is the role whose
+ * *future* tables the default privileges cover; every identifier is quoted the same way.
+ */
+export function provisionStatements(options: {
+  role: string;
+  owner: string;
+  database: string;
+}): string[] {
+  const role = quoteIdentifier(options.role);
+  const owner = quoteIdentifier(options.owner);
+  const database = quoteIdentifier(options.database);
+
+  return [
+    `GRANT CONNECT ON DATABASE ${database} TO ${role}`,
+    `GRANT USAGE ON SCHEMA public TO ${role}`,
+    `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${role}`,
+    `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`,
+    // The line whose absence is invisible until a future migration adds a table.
+    `ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA public ` +
+      `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${role}`,
+    `ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA public ` +
+      `GRANT USAGE, SELECT ON SEQUENCES TO ${role}`,
+  ];
+}
+
+export async function provision(
+  client: SqlClient,
+  options: { password?: string; log?: (line: string) => void } = {},
+): Promise<ProvisionResult> {
+  const log = options.log ?? ((line: string) => console.log(line));
+  const role = quoteIdentifier(ROLE);
+
+  /*
+   * Ask the database who we are, rather than reading it off the connection string.
+   *
+   * A URL's username is a *connection* credential, and on a managed provider it is not even that.
+   * Supabase's shared pooler expects `postgres.<projectref>`: a routing label that tells the
+   * pooler which project to connect to, and not the name of any role in the database it lands
+   * in. Deriving the owner from it failed before a single statement ran —
+   * `Refusing to use "postgres.<projectref>" as a SQL identifier.`
+   *
+   * Worse than that crash is the version of this bug that would not have crashed. Had the
+   * validator simply been loosened to accept a dot, the script would have issued
+   * `ALTER DEFAULT PRIVILEGES FOR ROLE "postgres.<projectref>"` naming a role that does not
+   * exist — and the grant that matters most, the one covering tables from future migrations,
+   * would have applied to nothing at all while the script printed success.
+   *
+   * `current_user` is the role the session actually runs as, so it is the role that will own the
+   * tables migrations create. That ownership is the only thing default privileges can key off.
+   */
+  const [session] = await client.$queryRawUnsafe<{ session_role: string; database_name: string }[]>(
+    'SELECT current_user AS session_role, current_database() AS database_name',
+  );
+
+  if (!session?.session_role || !session?.database_name) {
+    throw new Error('Could not determine the session role and database from the connection.');
+  }
+
+  const owner = session.session_role;
+  const database = session.database_name;
+
+  log(`  connected as "${owner}" on database "${database}"`);
+
+  const [existing] = await client.$queryRawUnsafe<{ exists: boolean }[]>(
+    `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${literal(ROLE)}) AS exists`,
+  );
+
+  let action: ProvisionResult['action'];
+
+  if (!existing?.exists) {
+    if (!options.password) {
+      throw new Error(
+        `The role ${ROLE} does not exist and APP_DB_PASSWORD is not set.\n` +
+          'Set it to the password the application will use, and never to a value that has\n' +
+          'appeared in a terminal, a ticket or a commit.',
+      );
+    }
+    await client.$executeRawUnsafe(
+      `CREATE ROLE ${role} WITH LOGIN PASSWORD ${literal(options.password)} ` +
+        'NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION',
+    );
+    action = 'created';
+    log('  created the role');
+  } else if (options.password) {
+    await client.$executeRawUnsafe(`ALTER ROLE ${role} WITH PASSWORD ${literal(options.password)}`);
+    action = 'rotated';
+    log('  rotated the password');
+  } else {
+    action = 'unchanged';
+    log('  role already exists — password left unchanged');
+  }
+
+  /*
+   * Asserted every run rather than only at creation. These are exactly the attributes that make
+   * row-level security real: a superuser ignores every policy, and BYPASSRLS is what it sounds
+   * like. If somebody granted them in an emergency and forgot, this takes them back.
+   */
+  await client.$executeRawUnsafe(
+    `ALTER ROLE ${role} NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION`,
+  );
+
+  for (const statement of provisionStatements({ role: ROLE, owner, database })) {
+    await client.$executeRawUnsafe(statement);
+  }
+  log('  granted connect, schema usage, table and sequence privileges');
+  log('  set default privileges for tables created by future migrations');
+
+  const [check] = await client.$queryRawUnsafe<
+    { schema_usage: boolean; superuser: boolean; bypassrls: boolean }[]
+  >(
+    `SELECT has_schema_privilege(${literal(ROLE)}, 'public', 'USAGE') AS schema_usage,
+            r.rolsuper AS superuser, r.rolbypassrls AS bypassrls
+       FROM pg_roles r WHERE r.rolname = ${literal(ROLE)}`,
+  );
+
+  log('');
+  log(`  schema usage        ${check?.schema_usage ? 'yes' : 'NO'}`);
+  log(`  superuser           ${check?.superuser ? 'YES — WRONG' : 'no'}`);
+  log(`  bypasses RLS        ${check?.bypassrls ? 'YES — WRONG' : 'no'}`);
+  log('');
+
+  if (!check?.schema_usage || check.superuser || check.bypassrls) {
+    throw new Error('Provisioning did not produce the expected role.');
+  }
+
+  return { sessionRole: owner, database, action };
 }
 
 async function main(): Promise<void> {
@@ -71,95 +244,34 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const parsed = new URL(url);
-  const database = identifier(decodeURIComponent(parsed.pathname.replace(/^\//, '')));
-  // The role that runs migrations owns the tables they create, so it is the role whose default
-  // privileges decide what the application can touch afterwards.
-  const owner = identifier(decodeURIComponent(parsed.username));
-  const role = identifier(ROLE);
-  const password = process.env.APP_DB_PASSWORD;
+  /*
+   * The URL is parsed for one thing only: telling the operator which host they are pointed at.
+   * Nothing taken from it reaches a SQL statement — that is the whole point of the fix above.
+   */
+  const host = (() => {
+    try {
+      return new URL(url).host;
+    } catch {
+      return 'an unparseable host';
+    }
+  })();
 
-  console.log(`\nProvisioning "${role}" on ${parsed.host}/${database}, as ${owner}.\n`);
+  console.log(`\nProvisioning "${ROLE}" on ${host}.\n`);
 
   const client = new PrismaClient({ datasources: { db: { url } } });
 
   try {
-    const [existing] = await client.$queryRawUnsafe<{ exists: boolean }[]>(
-      `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') AS exists`,
-    );
-
-    if (!existing?.exists) {
-      if (!password) {
-        console.error(
-          `The role "${role}" does not exist and APP_DB_PASSWORD is not set.\n` +
-            'Set it to the password the application will use, and never to a value that has\n' +
-            'appeared in a terminal, a ticket or a commit.\n',
-        );
-        process.exit(1);
-      }
-      await client.$executeRawUnsafe(
-        `CREATE ROLE ${role} WITH LOGIN PASSWORD ${literal(password)} ` +
-          'NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION',
-      );
-      console.log('  created the role');
-    } else if (password) {
-      await client.$executeRawUnsafe(`ALTER ROLE ${role} WITH PASSWORD ${literal(password)}`);
-      console.log('  rotated the password');
-    } else {
-      console.log('  role already exists — password left unchanged');
-    }
-
-    /*
-     * Asserted every run rather than only at creation. These are exactly the attributes that make
-     * row-level security real: a superuser ignores every policy, and BYPASSRLS is what it sounds
-     * like. If somebody granted them in an emergency and forgot, this takes them back.
-     */
-    await client.$executeRawUnsafe(
-      `ALTER ROLE ${role} NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION`,
-    );
-
-    for (const statement of [
-      `GRANT CONNECT ON DATABASE ${database} TO ${role}`,
-      `GRANT USAGE ON SCHEMA public TO ${role}`,
-      `GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${role}`,
-      `GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${role}`,
-      // The line whose absence is invisible until a future migration adds a table.
-      `ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA public ` +
-        `GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ${role}`,
-      `ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA public ` +
-        `GRANT USAGE, SELECT ON SEQUENCES TO ${role}`,
-    ]) {
-      await client.$executeRawUnsafe(statement);
-    }
-    console.log('  granted connect, schema usage, table and sequence privileges');
-    console.log('  set default privileges for tables created by future migrations');
-
-    const [check] = await client.$queryRawUnsafe<
-      { schema_usage: boolean; superuser: boolean; bypassrls: boolean }[]
-    >(
-      `SELECT has_schema_privilege('${role}', 'public', 'USAGE') AS schema_usage,
-              r.rolsuper AS superuser, r.rolbypassrls AS bypassrls
-         FROM pg_roles r WHERE r.rolname = '${role}'`,
-    );
-
-    console.log('');
-    console.log(`  schema usage        ${check?.schema_usage ? 'yes' : 'NO'}`);
-    console.log(`  superuser           ${check?.superuser ? 'YES — WRONG' : 'no'}`);
-    console.log(`  bypasses RLS        ${check?.bypassrls ? 'YES — WRONG' : 'no'}`);
-    console.log('');
-
-    if (!check?.schema_usage || check.superuser || check.bypassrls) {
-      console.error('Provisioning did not produce the expected role. Stopping.\n');
-      process.exit(1);
-    }
-
+    await provision(client, { password: process.env.APP_DB_PASSWORD });
     console.log('Done. Verify the whole picture with `pnpm ops:verify-deployment`.\n');
   } finally {
     await client.$disconnect();
   }
 }
 
-main().catch((error: unknown) => {
-  console.error(error);
-  process.exit(1);
-});
+// Only when invoked directly, so the functions above can be imported by tests.
+if (process.argv[1]?.includes('provision-app-role')) {
+  main().catch((error: unknown) => {
+    console.error(`\n${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  });
+}
