@@ -33,10 +33,25 @@ makes it swappable for any managed PostgreSQL and any S3-compatible bucket.
 APP_DB_PASSWORD=… DIRECT_URL=… pnpm ops:provision-role
 ```
 
-Idempotent, and safe to re-run. It creates the role if absent, asserts `NOSUPERUSER` and
-`NOBYPASSRLS` **every run** rather than only at creation, grants connect/schema/table/sequence
-rights, and — the one that is invisible when forgotten — sets `ALTER DEFAULT PRIVILEGES` so
-tables created by _future_ migrations are covered without another grant.
+Idempotent, and safe to re-run. It creates the role if absent, grants connect/schema/table/
+sequence rights, and — the one that is invisible when forgotten — sets `ALTER DEFAULT PRIVILEGES`
+so tables created by _future_ migrations are covered without another grant.
+
+**It verifies the restricted attributes rather than asserting them.** Every run reads `pg_roles`
+and refuses to grant anything unless `SUPERUSER`, `BYPASSRLS`, `CREATEDB`, `CREATEROLE` and
+`REPLICATION` are all false, and the role can log in.
+
+That is not a weaker check — it is the only one available here, and it is the stronger claim.
+Postgres requires a **true superuser** to set `SUPERUSER` or `BYPASSRLS` _even to false_, and
+Supabase's `postgres` has admin capability without being one; it answers `permission denied to
+alter role`. An earlier version issued that `ALTER ROLE` unconditionally, which worked locally
+only because the development container's owner really is a superuser. On Supabase it created the
+role and died one statement later, leaving a role with no grants at all.
+
+Reading `pg_roles` needs no privilege and establishes the better fact: not "we asked for it to be
+false" but "it is false". `CREATEDB` and `CREATEROLE` are the two a `CREATEROLE` owner may
+legally tighten, so those are attempted when set — and a refusal is reported rather than fatal,
+because the verification is what decides.
 
 Before this existed, those grants lived only in the Docker volume’s one-time init script. A
 managed database has no such hook, so provisioning a new environment meant typing them correctly

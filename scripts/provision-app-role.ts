@@ -24,7 +24,8 @@
  *
  * Connects as the owner (`DIRECT_URL`) and, safe to re-run at any time:
  *
- *   - creates the role if it does not exist, `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`
+ *   - creates the role if it does not exist, with LOGIN and every restricted attribute off
+ *   - **verifies** the role holds none of the attributes that would void tenancy
  *   - grants `CONNECT` on the database and `USAGE` on the schema
  *   - grants table and sequence privileges on what exists now
  *   - sets default privileges so tables from future migrations are covered automatically
@@ -98,10 +99,95 @@ export interface SqlClient {
   $executeRawUnsafe(sql: string): Promise<unknown>;
 }
 
+/**
+ * The role attributes that decide whether tenancy is real.
+ *
+ * `rolsuper` and `rolbypassrls` matter most: a superuser ignores every RLS policy in the schema,
+ * and BYPASSRLS is what it sounds like. The other three are defence in depth — an application
+ * role has no business creating databases, creating roles, or streaming replication.
+ */
+export interface RoleAttributes {
+  readonly rolcanlogin: boolean;
+  readonly rolsuper: boolean;
+  readonly rolbypassrls: boolean;
+  readonly rolcreatedb: boolean;
+  readonly rolcreaterole: boolean;
+  readonly rolreplication: boolean;
+}
+
 export interface ProvisionResult {
   readonly sessionRole: string;
   readonly database: string;
   readonly action: 'created' | 'rotated' | 'unchanged';
+  readonly attributes: RoleAttributes;
+  /** True when a best-effort tightening was attempted and the owner was not allowed to do it. */
+  readonly reassertRefused: boolean;
+}
+
+/** Every attribute that must be false, with the reason, for the message when one is not. */
+const FORBIDDEN: readonly { key: keyof RoleAttributes; label: string; why: string }[] = [
+  { key: 'rolsuper', label: 'SUPERUSER', why: 'ignores every row-level security policy' },
+  { key: 'rolbypassrls', label: 'BYPASSRLS', why: 'disables tenant isolation entirely' },
+  { key: 'rolcreatedb', label: 'CREATEDB', why: 'no application role needs to create databases' },
+  { key: 'rolcreaterole', label: 'CREATEROLE', why: 'no application role needs to create roles' },
+  { key: 'rolreplication', label: 'REPLICATION', why: 'no application role needs replication' },
+];
+
+/**
+ * The subset a managed owner may legally tighten.
+ *
+ * Postgres requires a true superuser to set SUPERUSER or BYPASSRLS **at all** — including to
+ * false — and REPLICATION likewise. CREATEDB and CREATEROLE can be changed by any role holding
+ * CREATEROLE, which a managed admin does. So these two are worth *attempting* to correct; the
+ * other three can only be reported.
+ */
+const TIGHTENABLE: readonly (keyof RoleAttributes)[] = ['rolcreatedb', 'rolcreaterole'];
+
+/** Reads the attributes, or null when the role does not exist. */
+export async function readRoleAttributes(
+  client: SqlClient,
+  roleName: string,
+): Promise<RoleAttributes | null> {
+  const rows = await client.$queryRawUnsafe<RoleAttributes[]>(
+    `SELECT rolcanlogin, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolreplication
+       FROM pg_roles WHERE rolname = ${literal(roleName)}`,
+  );
+  return rows?.[0] ?? null;
+}
+
+/**
+ * Fails closed if the role holds any attribute it must not.
+ *
+ * A *verification*, deliberately, rather than an `ALTER ROLE` asserting the same thing.
+ *
+ * Postgres requires a true superuser to set SUPERUSER or BYPASSRLS even to false, and a managed
+ * provider's admin role is not one — Supabase's `postgres` answers `permission denied to alter
+ * role`. The previous version issued that ALTER unconditionally, so on Supabase it created the
+ * role and then died one statement later, leaving the database half-provisioned: a role with no
+ * grants at all.
+ *
+ * Depending on a privileged ALTER to *prove* safety means the proof is unavailable on exactly the
+ * infrastructure the pilot runs on. Reading `pg_roles` needs no privilege whatsoever and
+ * establishes the stronger fact: not "we asked for it to be false" but "it is false".
+ */
+export function assertRoleIsSafe(roleName: string, attributes: RoleAttributes): void {
+  const held = FORBIDDEN.filter((attribute) => attributes[attribute.key]);
+
+  if (held.length > 0) {
+    const lines = held.map((a) => `  - ${a.label}: ${a.why}`).join('\n');
+    throw new Error(
+      `The role ${roleName} holds ${held.length} attribute(s) it must not:\n${lines}\n\n` +
+        'Refusing to grant privileges to it — those attributes would make tenant isolation\n' +
+        'decorative. Remove them using a role with the authority to do so, which on a managed\n' +
+        "provider may mean the provider's own dashboard, then run this again.",
+    );
+  }
+
+  if (!attributes.rolcanlogin) {
+    throw new Error(
+      `The role ${roleName} exists but cannot log in, so the application could not use it.`,
+    );
+  }
 }
 
 /**
@@ -132,6 +218,12 @@ export function provisionStatements(options: {
   ];
 }
 
+/** Postgres reports a refused ALTER ROLE as SQLSTATE 42501, or says so in the message. */
+function isPermissionDenied(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /42501|permission denied|must be superuser|not allowed/i.test(text);
+}
+
 export async function provision(
   client: SqlClient,
   options: { password?: string; log?: (line: string) => void } = {},
@@ -147,12 +239,6 @@ export async function provision(
    * pooler which project to connect to, and not the name of any role in the database it lands
    * in. Deriving the owner from it failed before a single statement ran —
    * `Refusing to use "postgres.<projectref>" as a SQL identifier.`
-   *
-   * Worse than that crash is the version of this bug that would not have crashed. Had the
-   * validator simply been loosened to accept a dot, the script would have issued
-   * `ALTER DEFAULT PRIVILEGES FOR ROLE "postgres.<projectref>"` naming a role that does not
-   * exist — and the grant that matters most, the one covering tables from future migrations,
-   * would have applied to nothing at all while the script printed success.
    *
    * `current_user` is the role the session actually runs as, so it is the role that will own the
    * tables migrations create. That ownership is the only thing default privileges can key off.
@@ -170,13 +256,10 @@ export async function provision(
 
   log(`  connected as "${owner}" on database "${database}"`);
 
-  const [existing] = await client.$queryRawUnsafe<{ exists: boolean }[]>(
-    `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${literal(ROLE)}) AS exists`,
-  );
-
+  let attributes = await readRoleAttributes(client, ROLE);
   let action: ProvisionResult['action'];
 
-  if (!existing?.exists) {
+  if (!attributes) {
     if (!options.password) {
       throw new Error(
         `The role ${ROLE} does not exist and APP_DB_PASSWORD is not set.\n` +
@@ -184,6 +267,11 @@ export async function provision(
           'appeared in a terminal, a ticket or a commit.',
       );
     }
+    /*
+     * Every restricted attribute is named on creation. This works even for a managed owner:
+     * naming the *absence* of SUPERUSER is the default and needs no privilege, whereas altering
+     * it afterwards does. Creation is the one moment these can be stated cheaply, so they are.
+     */
     await client.$executeRawUnsafe(
       `CREATE ROLE ${role} WITH LOGIN PASSWORD ${literal(options.password)} ` +
         'NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION',
@@ -191,6 +279,11 @@ export async function provision(
     action = 'created';
     log('  created the role');
   } else if (options.password) {
+    /*
+     * Not best-effort. If an operator asked to rotate a credential, silently not rotating it is
+     * the one outcome that must never be reported as success — they would believe the old
+     * password is dead when it is still live.
+     */
     await client.$executeRawUnsafe(`ALTER ROLE ${role} WITH PASSWORD ${literal(options.password)}`);
     action = 'rotated';
     log('  rotated the password');
@@ -199,14 +292,39 @@ export async function provision(
     log('  role already exists — password left unchanged');
   }
 
+  attributes = await readRoleAttributes(client, ROLE);
+  if (!attributes) {
+    throw new Error(`The role ${ROLE} could not be read back after provisioning it.`);
+  }
+
   /*
-   * Asserted every run rather than only at creation. These are exactly the attributes that make
-   * row-level security real: a superuser ignores every policy, and BYPASSRLS is what it sounds
-   * like. If somebody granted them in an emergency and forgot, this takes them back.
+   * Best-effort tightening of the two attributes a managed owner may legally change.
+   *
+   * Attempted only when one is actually set, so the common path issues no privileged statement
+   * at all. A refusal is reported and does not stop the run — the verification below is what
+   * decides, and it does not care how the attribute came to be false.
    */
-  await client.$executeRawUnsafe(
-    `ALTER ROLE ${role} NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOREPLICATION`,
-  );
+  let reassertRefused = false;
+  const tightenable = TIGHTENABLE.filter((key) => attributes![key]);
+
+  if (tightenable.length > 0) {
+    try {
+      await client.$executeRawUnsafe(`ALTER ROLE ${role} NOCREATEDB NOCREATEROLE`);
+      log('  tightened CREATEDB/CREATEROLE');
+      attributes = (await readRoleAttributes(client, ROLE)) ?? attributes;
+    } catch (error) {
+      if (!isPermissionDenied(error)) throw error;
+      reassertRefused = true;
+      log('  could not tighten CREATEDB/CREATEROLE — this owner may not alter roles');
+    }
+  }
+
+  /*
+   * The security invariant, established by reading rather than by asserting. Nothing is granted
+   * until this passes.
+   */
+  assertRoleIsSafe(ROLE, attributes);
+  log('  verified: no SUPERUSER, BYPASSRLS, CREATEDB, CREATEROLE or REPLICATION');
 
   for (const statement of provisionStatements({ role: ROLE, owner, database })) {
     await client.$executeRawUnsafe(statement);
@@ -214,25 +332,27 @@ export async function provision(
   log('  granted connect, schema usage, table and sequence privileges');
   log('  set default privileges for tables created by future migrations');
 
-  const [check] = await client.$queryRawUnsafe<
-    { schema_usage: boolean; superuser: boolean; bypassrls: boolean }[]
-  >(
-    `SELECT has_schema_privilege(${literal(ROLE)}, 'public', 'USAGE') AS schema_usage,
-            r.rolsuper AS superuser, r.rolbypassrls AS bypassrls
-       FROM pg_roles r WHERE r.rolname = ${literal(ROLE)}`,
+  const [check] = await client.$queryRawUnsafe<{ schema_usage: boolean }[]>(
+    `SELECT has_schema_privilege(${literal(ROLE)}, 'public', 'USAGE') AS schema_usage`,
   );
 
   log('');
   log(`  schema usage        ${check?.schema_usage ? 'yes' : 'NO'}`);
-  log(`  superuser           ${check?.superuser ? 'YES — WRONG' : 'no'}`);
-  log(`  bypasses RLS        ${check?.bypassrls ? 'YES — WRONG' : 'no'}`);
+  log(`  superuser           ${attributes.rolsuper ? 'YES — WRONG' : 'no'}`);
+  log(`  bypasses RLS        ${attributes.rolbypassrls ? 'YES — WRONG' : 'no'}`);
+  log(
+    `  createdb/createrole ${attributes.rolcreatedb || attributes.rolcreaterole ? 'YES — WRONG' : 'no'}`,
+  );
+  log(`  replication         ${attributes.rolreplication ? 'YES — WRONG' : 'no'}`);
   log('');
 
-  if (!check?.schema_usage || check.superuser || check.bypassrls) {
-    throw new Error('Provisioning did not produce the expected role.');
+  if (!check?.schema_usage) {
+    throw new Error(
+      `Granting completed but ${ROLE} still has no USAGE on schema public. Stopping.`,
+    );
   }
 
-  return { sessionRole: owner, database, action };
+  return { sessionRole: owner, database, action, attributes, reassertRefused };
 }
 
 async function main(): Promise<void> {
@@ -246,7 +366,7 @@ async function main(): Promise<void> {
 
   /*
    * The URL is parsed for one thing only: telling the operator which host they are pointed at.
-   * Nothing taken from it reaches a SQL statement — that is the whole point of the fix above.
+   * Nothing taken from it reaches a SQL statement.
    */
   const host = (() => {
     try {
@@ -261,7 +381,10 @@ async function main(): Promise<void> {
   const client = new PrismaClient({ datasources: { db: { url } } });
 
   try {
-    await provision(client, { password: process.env.APP_DB_PASSWORD });
+    const result = await provision(client, { password: process.env.APP_DB_PASSWORD });
+    if (result.reassertRefused) {
+      console.log('This owner cannot alter role attributes, so they were verified instead.');
+    }
     console.log('Done. Verify the whole picture with `pnpm ops:verify-deployment`.\n');
   } finally {
     await client.$disconnect();
