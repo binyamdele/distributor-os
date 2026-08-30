@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  appendOnlyRevokes,
   assertRoleIsSafe,
   literal,
   provision,
@@ -28,6 +29,17 @@ const POOLER_USERNAME = 'postgres.examplerefid';
 /** What `current_user` actually returns once such a connection lands. */
 const SESSION_ROLE = 'postgres';
 
+/** Every table the migrations make write-once, in the order the script revokes them. */
+const ALL_APPEND_ONLY_TABLES = [
+  'audit_events',
+  'inventory_movements',
+  'import_jobs',
+  'ai_interactions',
+  'quotation_approvals',
+  'payment_evidence_files',
+  'stock_reservations',
+];
+
 const SAFE: RoleAttributes = {
   rolcanlogin: true,
   rolsuper: false,
@@ -45,6 +57,8 @@ interface FakeOptions {
   /** Simulates a managed owner: ALTER ROLE is refused. */
   refuseAlterRole?: boolean;
   schemaUsage?: boolean;
+  /** Which tables exist in public. Defaults to every append-only one. */
+  tables?: string[];
 }
 
 function fakeClient(options: FakeOptions = {}) {
@@ -62,6 +76,9 @@ function fakeClient(options: FakeOptions = {}) {
             database_name: options.databaseName ?? 'postgres',
           },
         ] as T;
+      }
+      if (sql.includes('FROM pg_tables')) {
+        return (options.tables ?? ALL_APPEND_ONLY_TABLES).map((tablename) => ({ tablename })) as T;
       }
       if (sql.includes('FROM pg_roles')) {
         // Repeat the last answer once the script reads more times than the test scripted.
@@ -320,5 +337,60 @@ describe('the final check', () => {
   it('fails if the role still has no schema usage after granting', async () => {
     const { client } = fakeClient({ attributes: SAFE, schemaUsage: false });
     await expect(provision(client, silently)).rejects.toThrow(/no USAGE on schema public/);
+  });
+});
+
+describe('the append-only tables the blanket grant would re-open', () => {
+  it('revokes write access on every one of them', () => {
+    const statements = appendOnlyRevokes('distributor_app', ALL_APPEND_ONLY_TABLES);
+
+    expect(statements).toContain(
+      'REVOKE UPDATE, DELETE ON "audit_events" FROM "distributor_app"',
+    );
+    expect(statements).toContain(
+      'REVOKE UPDATE, DELETE ON "inventory_movements" FROM "distributor_app"',
+    );
+    // Evidence and reservations may be superseded, never erased — DELETE only.
+    expect(statements).toContain(
+      'REVOKE DELETE ON "payment_evidence_files" FROM "distributor_app"',
+    );
+    expect(statements).toContain('REVOKE DELETE ON "stock_reservations" FROM "distributor_app"');
+    expect(statements).toHaveLength(7);
+  });
+
+  it('skips tables that do not exist yet, because revoking on one is an error', () => {
+    // A database that has not been migrated has none of them.
+    expect(appendOnlyRevokes('distributor_app', [])).toHaveLength(0);
+    expect(appendOnlyRevokes('distributor_app', ['audit_events'])).toEqual([
+      'REVOKE UPDATE, DELETE ON "audit_events" FROM "distributor_app"',
+    ]);
+  });
+
+  it('re-revokes after the grants, never before them', async () => {
+    /*
+     * The regression this exists for. `GRANT … ON ALL TABLES IN SCHEMA public` has no exclusion
+     * list, so it hands back exactly the UPDATE and DELETE rights the migrations removed from the
+     * audit trail and the stock ledger. Running the revokes first would leave them re-granted.
+     */
+    const { client, executed } = fakeClient({ attributes: SAFE });
+
+    const result = await provision(client, silently);
+
+    // findLastIndex is not in this project's TypeScript lib, so index the kinds instead.
+    const kinds = executed.map((statement) => statement.split(' ')[0]);
+    const lastGrant = kinds.lastIndexOf('GRANT');
+    const firstRevoke = kinds.indexOf('REVOKE');
+
+    expect(firstRevoke).toBeGreaterThan(lastGrant);
+    expect(result.revokesApplied).toBe(7);
+  });
+
+  it('leaves an unmigrated database alone rather than failing', async () => {
+    const { client, executed } = fakeClient({ attributes: SAFE, tables: [] });
+
+    const result = await provision(client, silently);
+
+    expect(result.revokesApplied).toBe(0);
+    expect(executed.some((s) => s.startsWith('REVOKE'))).toBe(false);
   });
 });

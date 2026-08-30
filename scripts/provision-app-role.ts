@@ -30,9 +30,17 @@
  *   - grants table and sequence privileges on what exists now
  *   - sets default privileges so tables from future migrations are covered automatically
  *
- * It deliberately does **not** re-apply the append-only revokes. Those live in the migrations
- * that create those tables, which is where they belong: they are properties of the schema, not of
- * the role. `ops:verify-migrations` and `ops:verify-deployment` both assert they survived.
+ * It also **re-applies the append-only revokes**, and must. The grant above is
+ * `ON ALL TABLES IN SCHEMA public`, which cannot exclude a table — so it hands back the very
+ * UPDATE and DELETE rights the migrations took away on the audit trail, the stock ledger and the
+ * other write-once tables. An earlier version claimed to leave those alone as "properties of the
+ * schema"; in fact it silently destroyed them, and `ops:verify-deployment` caught it:
+ *
+ *     FAIL  append-only tables cannot be updated or deleted by the app role
+ *           — audit_events:UPDATE, audit_events:DELETE, import_jobs:UPDATE, …
+ *
+ * The revokes stay defined in the migrations that create those tables, which is where they
+ * belong. They are repeated here because this script is the only thing that can undo them.
  *
  * Usage:
  *   pnpm ops:provision-role                    # uses DIRECT_URL, leaves an existing password alone
@@ -122,6 +130,8 @@ export interface ProvisionResult {
   readonly attributes: RoleAttributes;
   /** True when a best-effort tightening was attempted and the owner was not allowed to do it. */
   readonly reassertRefused: boolean;
+  /** How many append-only revokes were re-applied after the blanket grant. */
+  readonly revokesApplied: number;
 }
 
 /** Every attribute that must be false, with the reason, for the message when one is not. */
@@ -216,6 +226,43 @@ export function provisionStatements(options: {
     `ALTER DEFAULT PRIVILEGES FOR ROLE ${owner} IN SCHEMA public ` +
       `GRANT USAGE, SELECT ON SEQUENCES TO ${role}`,
   ];
+}
+
+/**
+ * What the migrations take away, and this script must take away again.
+ *
+ * `GRANT … ON ALL TABLES` has no exclusion list, so it re-opens every one of these. The set is
+ * duplicated from the migrations deliberately: those are the source of truth for a *new*
+ * database, and this is the only code that can undo them on an existing one. If a future
+ * migration adds a write-once table, it belongs here too — `ops:verify-migrations` and
+ * `ops:verify-deployment` are what would notice the omission.
+ */
+const APPEND_ONLY: readonly { table: string; privileges: string }[] = [
+  // The audit trail. If this can be edited, it is not an audit trail.
+  { table: 'audit_events', privileges: 'UPDATE, DELETE' },
+  // The stock ledger: every movement is a fact about goods that physically moved.
+  { table: 'inventory_movements', privileges: 'UPDATE, DELETE' },
+  { table: 'import_jobs', privileges: 'UPDATE, DELETE' },
+  { table: 'ai_interactions', privileges: 'UPDATE, DELETE' },
+  { table: 'quotation_approvals', privileges: 'UPDATE, DELETE' },
+  // Deletable never: evidence and reservations may be superseded, not erased.
+  { table: 'payment_evidence_files', privileges: 'DELETE' },
+  { table: 'stock_reservations', privileges: 'DELETE' },
+];
+
+/**
+ * The revokes, for the append-only tables that actually exist yet.
+ *
+ * A database that has not been migrated has none of them, and revoking on a missing table is an
+ * error rather than a no-op — so the caller passes in what it found.
+ */
+export function appendOnlyRevokes(roleName: string, existingTables: readonly string[]): string[] {
+  const present = new Set(existingTables);
+  const role = quoteIdentifier(roleName);
+
+  return APPEND_ONLY.filter((entry) => present.has(entry.table)).map(
+    (entry) => `REVOKE ${entry.privileges} ON ${quoteIdentifier(entry.table)} FROM ${role}`,
+  );
 }
 
 /** Postgres reports a refused ALTER ROLE as SQLSTATE 42501, or says so in the message. */
@@ -332,6 +379,24 @@ export async function provision(
   log('  granted connect, schema usage, table and sequence privileges');
   log('  set default privileges for tables created by future migrations');
 
+  /*
+   * Immediately after the grants, and never before them: the blanket
+   * `GRANT … ON ALL TABLES` above has just handed back UPDATE and DELETE on the write-once
+   * tables, so this is what puts them back the way the migrations left them.
+   */
+  const tables = await client.$queryRawUnsafe<{ tablename: string }[]>(
+    "SELECT tablename FROM pg_tables WHERE schemaname = 'public'",
+  );
+  const revokes = appendOnlyRevokes(
+    ROLE,
+    (tables ?? []).map((row) => row.tablename),
+  );
+
+  for (const statement of revokes) {
+    await client.$executeRawUnsafe(statement);
+  }
+  log(`  re-revoked write access on ${revokes.length} append-only table(s)`);
+
   const [check] = await client.$queryRawUnsafe<{ schema_usage: boolean }[]>(
     `SELECT has_schema_privilege(${literal(ROLE)}, 'public', 'USAGE') AS schema_usage`,
   );
@@ -352,7 +417,7 @@ export async function provision(
     );
   }
 
-  return { sessionRole: owner, database, action, attributes, reassertRefused };
+  return { sessionRole: owner, database, action, attributes, reassertRefused, revokesApplied: revokes.length };
 }
 
 async function main(): Promise<void> {
