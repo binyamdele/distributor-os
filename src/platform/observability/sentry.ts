@@ -66,6 +66,22 @@ export function parseSentryDsn(dsn: string): Dsn | null {
   }
 }
 
+/**
+ * What happened to one delivery attempt.
+ *
+ * `report()` ignores this — reporting an error must never depend on telemetry succeeding. It
+ * exists so an operator can *verify* the path end to end and get a non-zero exit when Sentry
+ * refuses, which is the whole point of a verification command.
+ */
+export interface DeliveryOutcome {
+  readonly accepted: boolean;
+  readonly eventId: string;
+  /** Host only. The DSN's userinfo is its public key and must not be printed or logged. */
+  readonly host: string;
+  readonly status?: number;
+  readonly reason?: string;
+}
+
 const MAX_MESSAGE = 300;
 const MAX_STACK = 4_000;
 
@@ -122,13 +138,20 @@ export class SentryErrorReporter implements ErrorReporter {
       ...error.context,
     });
 
-    void this.send(error).catch(() => {
+    void this.deliver(error).catch(() => {
       // Already logged inside send(). Swallowed here so an unhandled rejection cannot take the
       // process down over a telemetry failure.
     });
   }
 
-  private async send(error: ReportedError): Promise<void> {
+  /**
+   * Sends one event and reports what came back.
+   *
+   * Public so `ops:sentry-test` can await exactly the transport the application uses — the same
+   * envelope, the same scrubbing, the same auth header — rather than a parallel curl that would
+   * prove only that curl works.
+   */
+  async deliver(error: ReportedError): Promise<DeliveryOutcome> {
     const eventId = randomUUID().replace(/-/g, '');
     const sentAt = new Date().toISOString();
 
@@ -201,13 +224,24 @@ export class SentryErrorReporter implements ErrorReporter {
           status: response.status,
         });
       }
+
+      return {
+        accepted: response.ok,
+        eventId,
+        host: this.dsn.host,
+        status: response.status,
+      };
     } catch (sendError) {
+      const reason = sendError instanceof Error ? sendError.name : 'unknown';
+
       log.warn({
         event: 'error_reporting.unreachable',
         correlationId: error.correlationId,
         destination: this.dsn.host,
-        reason: sendError instanceof Error ? sendError.name : 'unknown',
+        reason,
       });
+
+      return { accepted: false, eventId, host: this.dsn.host, reason };
     }
   }
 }

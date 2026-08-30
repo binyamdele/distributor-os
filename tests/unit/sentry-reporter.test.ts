@@ -198,3 +198,79 @@ describe('what is actually sent', () => {
     await settle();
   });
 });
+
+describe('delivering, when the caller wants the answer', () => {
+  const dsnFor = (port: number) => parseSentryDsn(`http://publickey@127.0.0.1:${port}/9`)!;
+
+  /**
+   * `report()` throws the outcome away on purpose — reporting an error must never depend on
+   * telemetry succeeding. `deliver()` is the same transport with the answer kept, so
+   * `ops:sentry-test` can exit non-zero when Sentry refuses. Anything less and a verification
+   * command would report success for an event that never arrived.
+   */
+  it('reports acceptance, with the event id and the host', async () => {
+    const { received, port } = await listen(200);
+
+    const outcome = await new SentryErrorReporter(dsnFor(port), {
+      environment: 'staging',
+      release: 'abc123',
+    }).deliver({
+      correlationId: 'req_TEST',
+      event: 'ops.sentry_verification',
+      message: 'Distributor OS Sentry verification test',
+    });
+
+    expect(outcome.accepted).toBe(true);
+    expect(outcome.status).toBe(200);
+    expect(outcome.eventId).toMatch(/^[0-9a-f]{32}$/);
+    // The host, never the DSN — its userinfo is the public key.
+    expect(outcome.host).toBe(`127.0.0.1:${port}`);
+    expect(outcome.host).not.toContain('publickey');
+
+    const event = eventFrom(received[0]!.body);
+    expect(event.environment).toBe('staging');
+    expect(event.release).toBe('abc123');
+  });
+
+  it('reports a rejection rather than swallowing it', async () => {
+    const { port } = await listen(401);
+
+    const outcome = await new SentryErrorReporter(dsnFor(port), {
+      environment: 'staging',
+      release: 'abc123',
+    }).deliver({ correlationId: 'req_TEST', event: 'ops.sentry_verification', message: 'x' });
+
+    expect(outcome.accepted).toBe(false);
+    expect(outcome.status).toBe(401);
+  });
+
+  it('reports an unreachable endpoint without throwing', async () => {
+    const outcome = await new SentryErrorReporter(parseSentryDsn('http://key@127.0.0.1:1/9')!, {
+      environment: 'staging',
+      release: 'abc123',
+    }).deliver({ correlationId: 'req_TEST', event: 'ops.sentry_verification', message: 'x' });
+
+    expect(outcome.accepted).toBe(false);
+    expect(outcome.status).toBeUndefined();
+    expect(outcome.reason).toBeTruthy();
+  });
+
+  it('scrubs the verification message on the way out', async () => {
+    // What ops:sentry-test relies on to prove scrubbing is live: a token-shaped string in the
+    // message must arrive redacted, so an operator can see it in the Sentry UI.
+    const { received, port } = await listen(200);
+
+    await new SentryErrorReporter(dsnFor(port), {
+      environment: 'staging',
+      release: 'abc123',
+    }).deliver({
+      correlationId: 'req_TEST',
+      event: 'ops.sentry_verification',
+      message: 'verification test, this must not appear: synthetic_token_for_scrub_test_0000000000',
+    });
+
+    const body = received[0]!.body;
+    expect(body).not.toContain('synthetic_token_for_scrub_test_0000000000');
+    expect(body).toContain('[redacted]');
+  });
+});

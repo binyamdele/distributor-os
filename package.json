@@ -41,6 +41,7 @@
     "ops:scan-secrets": "tsx scripts/scan-secrets.ts",
     "ci": "pnpm run typecheck && pnpm run lint && pnpm run test && pnpm run build",
     "ops:notify": "tsx scripts/notify.ts",
+    "ops:sentry-test": "tsx --require ./scripts/server-only-stub.cjs scripts/sentry-test.ts",
     "ops:check-backup-freshness": "tsx scripts/check-backup-freshness.ts",
     "ops:check-readiness": "tsx scripts/check-readiness.ts",
     "ops:maintenance": "tsx scripts/maintenance-mode.ts"

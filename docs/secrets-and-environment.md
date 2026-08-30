@@ -10,16 +10,16 @@ that way.
 
 ## 1. Four environments
 
-`APP_ENV`, which is deliberately *not* `NODE_ENV`.
+`APP_ENV`, which is deliberately _not_ `NODE_ENV`.
 
-| `APP_ENV` | Build | Data | Demo seed | Destructive reset | Mock AI |
-|---|---|---|---|---|---|
-| `development` | dev | synthetic | yes | yes | yes |
-| `test` | test | synthetic | yes | yes | yes |
-| `staging` | production | synthetic | no | no | yes |
-| `production` | production | **real** | **no** | **no** | **no** |
+| `APP_ENV`     | Build      | Data      | Demo seed | Destructive reset | Mock AI |
+| ------------- | ---------- | --------- | --------- | ----------------- | ------- |
+| `development` | dev        | synthetic | yes       | yes               | yes     |
+| `test`        | test       | synthetic | yes       | yes               | yes     |
+| `staging`     | production | synthetic | no        | no                | yes     |
+| `production`  | production | **real**  | **no**    | **no**            | **no**  |
 
-Staging runs a production *build* (`NODE_ENV=production`) against fabricated data. Keying these
+Staging runs a production _build_ (`NODE_ENV=production`) against fabricated data. Keying these
 decisions off `NODE_ENV` would force a choice between staging that cannot rehearse a release
 properly and production that inherits staging's permissions. Neither is acceptable, so the
 deployment target is named separately.
@@ -34,44 +34,44 @@ development's guard rails.
 
 ### Required everywhere
 
-| Variable | Purpose |
-|---|---|
-| `DATABASE_URL` | Application connection. **Must be `distributor_app`**, which is `NOSUPERUSER`/`NOBYPASSRLS` — RLS does not apply to a superuser, so connecting as the owner silently voids every tenancy guarantee |
-| `SESSION_SECRET` | Signs session cookies. 32+ characters. Generate with `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"` |
+| Variable         | Purpose                                                                                                                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`   | Application connection. **Must be `distributor_app`**, which is `NOSUPERUSER`/`NOBYPASSRLS` — RLS does not apply to a superuser, so connecting as the owner silently voids every tenancy guarantee |
+| `SESSION_SECRET` | Signs session cookies. 32+ characters. Generate with `node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"`                                                              |
 
 ### Required in staging and production
 
-| Variable | Purpose |
-|---|---|
+| Variable  | Purpose                                                          |
+| --------- | ---------------------------------------------------------------- |
 | `APP_URL` | The origin this is served from. Must be `https://` in production |
 
 ### Required in production
 
-| Variable | Purpose |
-|---|---|
-| `BUILD_SHA` | The deployed commit. Injected at image build. Startup refuses `unknown` |
-| `FILE_STORAGE_DRIVER=s3` | `local` is refused: container filesystems are ephemeral and evidence written there vanishes on restart |
-| `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Evidence storage |
-| `AI_PROVIDER` | `anthropic` or `disabled`. `mock` is refused |
+| Variable                                                             | Purpose                                                                                                |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `BUILD_SHA`                                                          | The deployed commit. Injected at image build. Startup refuses `unknown`                                |
+| `FILE_STORAGE_DRIVER=s3`                                             | `local` is refused: container filesystems are ephemeral and evidence written there vanishes on restart |
+| `S3_BUCKET`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Evidence storage                                                                                       |
+| `AI_PROVIDER`                                                        | `anthropic` or `disabled`. `mock` is refused                                                           |
 
 ### Migrations only
 
-| Variable | Purpose |
-|---|---|
+| Variable     | Purpose                                                                                                                                                                                            |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DIRECT_URL` | The **owner** connection. Used by `prisma migrate deploy` and by `ops:backup`. The application never uses it. A backup taken as the app role would contain no rows at all, because RLS is `FORCE`d |
 
 ### Optional
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `DATABASE_POOL_SIZE` | `10` | Small on purpose: a container that opens more than its share of a capped managed plan starves the migration job and any admin session trying to diagnose it |
-| `DATABASE_POOL_TIMEOUT_SECONDS` | `20` | Without it, a request that cannot get a connection waits forever and the user watches a spinner |
-| `ANTHROPIC_API_KEY` | — | Required when `AI_PROVIDER=anthropic`; startup refuses the combination without it |
-| `AI_TIMEOUT_MS` | `20000` | A provider that stops answering must not hold a request open |
-| `ERROR_REPORTING_DSN` | — | A Sentry DSN sends server exceptions there. Absent means log-only, which is a workable pilot position. Anything that is not a Sentry DSN logs a warning once and falls back to logging, rather than silently doing nothing |
-| `RATE_LIMIT_ENABLED` | `true` | Opt-*out*, so switching it off during an incident is a visible act |
-| `LOG_LEVEL` | `info` (`debug` in development) | |
-| `DEMO_MODE` | `false` | The one escape hatch, and it is narrow — see §6 |
+| Variable                        | Default                         | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_POOL_SIZE`            | `10`                            | Small on purpose: a container that opens more than its share of a capped managed plan starves the migration job and any admin session trying to diagnose it                                                                                                                                                                                                                                                                                   |
+| `DATABASE_POOL_TIMEOUT_SECONDS` | `20`                            | Without it, a request that cannot get a connection waits forever and the user watches a spinner                                                                                                                                                                                                                                                                                                                                               |
+| `ANTHROPIC_API_KEY`             | —                               | Required when `AI_PROVIDER=anthropic`; startup refuses the combination without it                                                                                                                                                                                                                                                                                                                                                             |
+| `AI_TIMEOUT_MS`                 | `20000`                         | A provider that stops answering must not hold a request open                                                                                                                                                                                                                                                                                                                                                                                  |
+| `ERROR_REPORTING_DSN`           | —                               | A Sentry DSN sends server exceptions there. Absent means log-only, which is a workable pilot position. Anything that is not a Sentry DSN logs a warning once and falls back to logging, rather than silently doing nothing. **Not `SENTRY_DSN`** — the name describes the seam rather than the vendor, so changing provider does not mean renaming a variable. `pnpm ops:sentry-test` says so explicitly if it finds `SENTRY_DSN` set instead |
+| `RATE_LIMIT_ENABLED`            | `true`                          | Opt-_out_, so switching it off during an incident is a visible act                                                                                                                                                                                                                                                                                                                                                                            |
+| `LOG_LEVEL`                     | `info` (`debug` in development) |                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `DEMO_MODE`                     | `false`                         | The one escape hatch, and it is narrow — see §6                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ### Read by the operational scripts, not by the application
 
@@ -79,12 +79,12 @@ These are never parsed by the config schema and can never stop the application f
 That separation is deliberate: a typo in an alerting variable should not take a distributor's
 system offline.
 
-| Variable | Used by | Purpose |
-|---|---|---|
-| `TELEGRAM_BOT_TOKEN` | `ops:notify`, `ops:backup`, `ops:check-*` | Bot token from @BotFather. **Never logged**, never printed, and never included in a delivery result |
-| `TELEGRAM_CHAT_ID` | as above | The chat or channel the alert goes to. Only the last four characters are ever printed |
-| `ALERT_WEBHOOK_URL` | as above | Slack/Discord/Google Chat incoming webhook. Only the host is ever printed — the path carries the secret |
-| `ALERT_LOG_PATH` | as above | Default `./backups/alerts.log`. The fallback-of-record, written before any network call |
+| Variable             | Used by                                   | Purpose                                                                                                 |
+| -------------------- | ----------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `TELEGRAM_BOT_TOKEN` | `ops:notify`, `ops:backup`, `ops:check-*` | Bot token from @BotFather. **Never logged**, never printed, and never included in a delivery result     |
+| `TELEGRAM_CHAT_ID`   | as above                                  | The chat or channel the alert goes to. Only the last four characters are ever printed                   |
+| `ALERT_WEBHOOK_URL`  | as above                                  | Slack/Discord/Google Chat incoming webhook. Only the host is ever printed — the path carries the secret |
+| `ALERT_LOG_PATH`     | as above                                  | Default `./backups/alerts.log`. The fallback-of-record, written before any network call                 |
 
 Both halves of the Telegram pair are required; one alone configures nothing.
 
@@ -143,11 +143,11 @@ a secret-shaped name ever acquires that prefix.
 
 **Never** in Git, source files, the seed, docs, logs, error reports or image layers.
 
-| Environment | Mechanism |
-|---|---|
-| development | `.env`, untracked, `.gitignore`d |
-| CI | repository secrets; the workflow uses obvious non-secrets for the throwaway database |
-| staging / production | the platform's secret store, injected as environment variables at runtime |
+| Environment          | Mechanism                                                                            |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| development          | `.env`, untracked, `.gitignore`d                                                     |
+| CI                   | repository secrets; the workflow uses obvious non-secrets for the throwaway database |
+| staging / production | the platform's secret store, injected as environment variables at runtime            |
 
 Secrets are injected **at runtime, never at build time**. The Dockerfile sets deliberately fake
 values so `next build` can compile pages, and every one of them is refused by the production
@@ -155,12 +155,12 @@ guards — so an image that somehow ran with them would fail to start rather tha
 
 ### Rotation
 
-| Secret | When | Effect |
-|---|---|---|
-| `SESSION_SECRET` | on suspected compromise; annually | every session invalidated; everyone signs in again |
-| Database password | on suspected compromise; annually | requires a restart with the new URL |
-| `S3_*` | on suspected compromise; annually | evidence unreadable until updated; other workflows continue |
-| `ANTHROPIC_API_KEY` | on suspected compromise | AI features fall back; the deterministic paths continue |
+| Secret              | When                              | Effect                                                      |
+| ------------------- | --------------------------------- | ----------------------------------------------------------- |
+| `SESSION_SECRET`    | on suspected compromise; annually | every session invalidated; everyone signs in again          |
+| Database password   | on suspected compromise; annually | requires a restart with the new URL                         |
+| `S3_*`              | on suspected compromise; annually | evidence unreadable until updated; other workflows continue |
+| `ANTHROPIC_API_KEY` | on suspected compromise           | AI features fall back; the deterministic paths continue     |
 
 A secret that has ever been committed is compromised whether or not it is still in the working
 tree. Rotate first, remove second.
@@ -196,7 +196,7 @@ pnpm test:storage        # with TEST_S3_* pointed at the new key pair
 ```
 
 Readiness green after a rotation is the only evidence that the new credentials actually work.
-Readiness green *before* a rotation proves nothing about it — which is why the order matters.
+Readiness green _before_ a rotation proves nothing about it — which is why the order matters.
 
 **Do not put the old or new values in any document, ticket, or commit message**, including this
 one. The names above are the whole of what belongs in writing.
