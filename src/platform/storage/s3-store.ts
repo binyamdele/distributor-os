@@ -8,6 +8,7 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { log } from '@/platform/observability/logger';
 import type { FileMetadata, FileStore, PutInput, StoreHealth, StoredFile } from './types';
 
 /**
@@ -238,9 +239,48 @@ export class S3FileStore implements FileStore {
       await this.client.send(new HeadBucketCommand({ Bucket: this.bucket }));
       return { reachable: true };
     } catch (error) {
-      return { reachable: false, detail: classify(error) };
+      const detail = classify(error);
+
+      /*
+       * The response says a category; the log says why.
+       *
+       * These must stay separate. The readiness endpoint is the most-probed URL a deployment has
+       * and is reachable before authentication, so it names no host, bucket or credential — but
+       * an operator staring at `unreachable` has nowhere to go, and diagnosing one such failure
+       * cost a full deploy cycle. The log is server-side, already redacted, and is where this
+       * belongs.
+       *
+       * The error's `name` and the host it tried are the two facts that identify the problem:
+       * a wrong endpoint, a missing bucket and virtual-host addressing against a provider that
+       * only serves path-style all look identical from outside and completely different here.
+       */
+      log.warn({
+        event: 'file_store.unreachable',
+        detail,
+        reason: error instanceof Error ? error.name : 'unknown',
+        // Host only, never the key, the signature or the full URL.
+        host: hostOf(error),
+      });
+
+      return { reachable: false, detail };
     }
   }
+}
+
+/**
+ * The hostname the SDK actually tried, dug out of whatever the failure carried.
+ *
+ * It is the single most useful fact when a store is unreachable, because it distinguishes the
+ * two configurations that otherwise look the same: `bucket.project.supabase.co` means
+ * virtual-host addressing was used against a provider that only serves path-style, and
+ * `project.supabase.co` means addressing was right and something else is wrong.
+ */
+function hostOf(error: unknown): string {
+  const candidate = error as { hostname?: string; message?: string };
+  if (candidate?.hostname) return candidate.hostname;
+
+  const match = /([a-z0-9-]+(?:.[a-z0-9-]+)+)/i.exec(candidate?.message ?? '');
+  return match?.[1] ?? 'unknown';
 }
 
 function statusOf(error: unknown): number | undefined {

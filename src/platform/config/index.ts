@@ -94,10 +94,24 @@ const schema = z
      * Required by MinIO and most self-hosted gateways, whose virtual-host addressing would need
      * wildcard DNS they do not have. AWS and R2 prefer the default.
      */
+    /*
+     * Left undefined rather than defaulted, so the storage adapter's own rule applies: path-style
+     * addressing whenever a custom `S3_ENDPOINT` is set, virtual-host for AWS itself.
+     *
+     * It used to default to `'false'`, which quietly disabled that rule — the adapter's
+     * `forcePathStyle ?? Boolean(endpoint)` could never fire, because config always handed it an
+     * explicit boolean. A deployment that set every S3 variable except this one therefore asked
+     * for virtual-host addressing against a provider that does not offer it, and the SDK resolved
+     * `<bucket>.<project>.supabase.co` — a hostname that does not exist. The DNS failure carries
+     * no HTTP status, so it surfaced as the least informative thing readiness can say:
+     * `file-store: degraded (unreachable)`.
+     *
+     * Set it explicitly only to override that rule.
+     */
     S3_FORCE_PATH_STYLE: z
       .enum(['true', 'false'])
-      .default('false')
-      .transform((value) => value === 'true'),
+      .optional()
+      .transform((value) => (value === undefined ? undefined : value === 'true')),
 
     /** Where unhandled server exceptions are reported. Absent means log-only. */
     ERROR_REPORTING_DSN: z.string().optional(),

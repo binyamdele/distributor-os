@@ -292,3 +292,45 @@ describe('rate limiting', () => {
     expect(consume('login', 'a@b.example').allowed).toBe(true);
   });
 });
+
+describe('S3 addressing', () => {
+  /**
+   * The setting that took a deploy to diagnose.
+   *
+   * `S3_FORCE_PATH_STYLE` used to default to `'false'`, which meant the storage adapter's own
+   * rule — path-style whenever a custom endpoint is set — could never apply, because config
+   * always handed it an explicit boolean. A deployment that set every other S3 variable asked
+   * for virtual-host addressing against a provider that only serves path-style, and the SDK
+   * resolved `<bucket>.<project>.supabase.co`: a hostname that does not exist.
+   *
+   * The storage suites all construct the adapter directly with `forcePathStyle: true`, so none
+   * of them touched this wiring. That is why it reached a deployment.
+   */
+  it('leaves path style unset so the adapter decides from the endpoint', () => {
+    const result = parseConfig({
+      ...base,
+      APP_ENV: 'staging',
+      S3_ENDPOINT: 'https://examplerefid.supabase.co/storage/v1/s3',
+    } as unknown as NodeJS.ProcessEnv);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.S3_FORCE_PATH_STYLE).toBeUndefined();
+  });
+
+  it('still honours an explicit setting in either direction', () => {
+    const on = parseConfig({
+      ...base,
+      APP_ENV: 'staging',
+      S3_FORCE_PATH_STYLE: 'true',
+    } as unknown as NodeJS.ProcessEnv);
+    expect(on.ok && on.value.S3_FORCE_PATH_STYLE).toBe(true);
+
+    const off = parseConfig({
+      ...base,
+      APP_ENV: 'staging',
+      S3_FORCE_PATH_STYLE: 'false',
+    } as unknown as NodeJS.ProcessEnv);
+    expect(off.ok && off.value.S3_FORCE_PATH_STYLE).toBe(false);
+  });
+});
