@@ -45,11 +45,17 @@ ENV PUPPETEER_SKIP_DOWNLOAD=1
 # that was tested. A deploy that quietly upgraded a transitive dependency is a deploy nobody can
 # reproduce.
 #
-# The cache mount keeps pnpm's content-addressable store between builds. It is a build-time cache
-# only and never becomes a layer, so rebuilds get faster without anything extra reaching the
-# shipped image.
-RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
-    pnpm install --frozen-lockfile
+# Plain RUN, with no BuildKit cache mount. There used to be a
+# `--mount=type=cache,id=pnpm-store,…` here, and Railway rejected the Dockerfile before the build
+# even started: its parser requires a cacheKey prefix on the mount id, which is builder-specific
+# syntax that standard Docker does not ask for.
+#
+# The mount only ever bought speed — it kept pnpm's store between local rebuilds. Speed on a
+# developer's machine is not worth a Dockerfile that only some builders accept, and the layer
+# above already caches this step against `package.json` and `pnpm-lock.yaml`, so the install is
+# skipped entirely unless a dependency actually changed. What was lost is the cold-build case,
+# which is a few minutes of downloading in CI and on the deploy host.
+RUN pnpm install --frozen-lockfile
 
 # ---------------------------------------------------------------------------
 # 2. Build
